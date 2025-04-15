@@ -28,7 +28,6 @@ BLOCKED_DOMAINS = [
 ]
 
 def get_random_published_before():
-    # Random date between now and 10 years ago
     days_ago = random.randint(10, 3650)
     date = datetime.utcnow() - timedelta(days=days_ago)
     return date.isoformat("T") + "Z"
@@ -128,7 +127,10 @@ def check_click_leak(link, video_meta, video_id):
             "discovered_at": datetime.utcnow().isoformat(),
             "scanned_at": datetime.utcnow().isoformat()
         }
-        supabase.table("Clickyleaks").insert(record).execute()
+        try:
+            supabase.table("Clickyleaks").insert(record).execute()
+        except Exception as e:
+            print(f"⚠️ Skipped duplicate: {e}")
 
 def main():
     print("🚀 Clickyleaks scan started...")
@@ -154,6 +156,7 @@ def main():
         links = extract_links(details["description"])
         for link in links:
             check_click_leak(link, details, video_id)
+            break  # optional: only process one link per video
 
         time.sleep(1)
 
