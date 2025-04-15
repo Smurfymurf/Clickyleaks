@@ -117,6 +117,17 @@ def already_scanned(video_id):
     result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
     return len(result.data) > 0
 
+def record_video_only(video_id, video_meta):
+    try:
+        supabase.table("Clickyleaks").insert({
+            "video_id": video_id,
+            "video_title": video_meta["title"],
+            "video_url": video_meta["url"],
+            "scanned_at": datetime.utcnow().isoformat()
+        }).execute()
+    except Exception as e:
+        print(f"⚠️ Skipping duplicate video_id insert: {e}")
+
 def check_click_leak(link, video_meta, video_id):
     domain = urlparse(link).netloc.lower()
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
@@ -149,24 +160,10 @@ def check_click_leak(link, video_meta, video_id):
 
     try:
         supabase.table("Clickyleaks").insert(record).execute()
+        return True
     except Exception as e:
         print(f"⚠️ Skipped duplicate: {e}")
-    
-    return True
-
-def log_video_scan(video_id, video_meta):
-    try:
-        supabase.table("Clickyleaks").insert({
-            "video_id": video_id,
-            "video_title": video_meta["title"],
-            "video_url": video_meta["url"],
-            "view_count": video_meta["view_count"],
-            "is_available": False,
-            "discovered_at": datetime.utcnow().isoformat(),
-            "scanned_at": datetime.utcnow().isoformat()
-        }).execute()
-    except Exception as e:
-        print(f"⚠️ Skipping duplicate video_id insert: {e}")
+        return False
 
 def main():
     print("🚀 Clickyleaks scan started...")
@@ -190,14 +187,14 @@ def main():
             continue
 
         links = extract_links(details["description"])
-        found = False
+        processed = False
         for link in links:
-            found = check_click_leak(link, details, video_id)
-            if found:
-                break  # Process only one usable link per video
+            if check_click_leak(link, details, video_id):
+                processed = True
+                break  # Stop after one successful leak
 
-        if not found:
-            log_video_scan(video_id, details)
+        if not processed:
+            record_video_only(video_id, details)
 
         time.sleep(1)
 
