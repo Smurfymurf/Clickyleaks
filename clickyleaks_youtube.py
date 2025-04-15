@@ -88,7 +88,7 @@ def is_domain_available(domain):
     root = domain.lower().strip()
     if root.startswith("www."):
         root = root[4:]
-    root = root.split("/")[0]  # remove any trailing path
+    root = root.split("/")[0]
 
     headers = {
         "Authorization": f"sso-key {GODADDY_API_KEY}:{GODADDY_API_SECRET}",
@@ -122,31 +122,35 @@ def check_click_leak(link, video_meta, video_id):
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
         return
 
+    is_available = is_domain_available(domain)
+    if not is_available:
+        print(f"🔴 Skipping unavailable domain: {domain}")
+        return
+
     try:
         status = requests.head(link, timeout=5, allow_redirects=True).status_code
     except:
         status = 0
 
-    is_available = is_domain_available(domain)
+    print(f"🟢 Available domain found: {domain} — adding to DB")
 
-    if status in [404, 410, 0] or is_available:
-        print(f"🧨 Leak found: {domain} from {video_meta['title']}")
-        record = {
-            "domain": domain,
-            "full_url": link,
-            "video_id": video_id,
-            "video_title": video_meta["title"],
-            "video_url": video_meta["url"],
-            "http_status": status,
-            "is_available": is_available,
-            "view_count": video_meta["view_count"],
-            "discovered_at": datetime.utcnow().isoformat(),
-            "scanned_at": datetime.utcnow().isoformat()
-        }
-        try:
-            supabase.table("Clickyleaks").insert(record).execute()
-        except Exception as e:
-            print(f"⚠️ Skipped duplicate: {e}")
+    record = {
+        "domain": domain,
+        "full_url": link,
+        "video_id": video_id,
+        "video_title": video_meta["title"],
+        "video_url": video_meta["url"],
+        "http_status": status,
+        "is_available": is_available,
+        "view_count": video_meta["view_count"],
+        "discovered_at": datetime.utcnow().isoformat(),
+        "scanned_at": datetime.utcnow().isoformat()
+    }
+
+    try:
+        supabase.table("Clickyleaks").insert(record).execute()
+    except Exception as e:
+        print(f"⚠️ Skipped duplicate: {e}")
 
 def main():
     print("🚀 Clickyleaks scan started...")
@@ -172,7 +176,7 @@ def main():
         links = extract_links(details["description"])
         for link in links:
             check_click_leak(link, details, video_id)
-            break  # optional: only process one link per video
+            break  # optional: process only 1 link per video
 
         time.sleep(1)
 
