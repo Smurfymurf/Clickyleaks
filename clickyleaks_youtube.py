@@ -11,6 +11,13 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 KEYWORDS = ["crypto wallet", "keto diet", "credit repair", "free stocks", "ai tools"]
 
+# Domains to ignore (known platforms, shorteners, redirectors)
+BLOCKED_DOMAINS = [
+    "amzn.to", "bit.ly", "t.co", "youtube.com", "instagram.com",
+    "linktr.ee", "rumble.com", "facebook.com", "twitter.com",
+    "linkedin.com", "paypal.com", "discord.gg", "youtu.be"
+]
+
 # === SETUP ===
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -54,7 +61,12 @@ def is_domain_available(domain):
         return True
 
 def check_click_leak(link, video_meta):
-    domain = urlparse(link).netloc
+    domain = urlparse(link).netloc.lower()
+
+    # Skip blocked domains
+    if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
+        return
+
     try:
         response = requests.head(link, timeout=5, allow_redirects=True)
         status = response.status_code
@@ -62,6 +74,7 @@ def check_click_leak(link, video_meta):
         status = 0
 
     is_available = is_domain_available(domain)
+
     if status in [404, 410, 0] or is_available:
         print(f"🧨 Leak found: {domain} from {video_meta['title']}")
         record = {
@@ -91,8 +104,6 @@ def main():
                 continue
             links = extract_links(details["description"])
             for link in links:
-                if "youtube.com" in link or "instagram.com" in link:
-                    continue
                 check_click_leak(link, details)
             time.sleep(1)
     print("✅ Scan complete.")
