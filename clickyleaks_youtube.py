@@ -1,10 +1,10 @@
-
 import requests, time, random
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
 import os
 from googleapiclient.discovery import build
+import re
 
 # === CONFIG ===
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
@@ -13,11 +13,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GODADDY_API_KEY = os.getenv("GODADDY_API_KEY")
 GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET")
 
-# === Setup Supabase + YouTube API
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# === Affiliate-style keyword list
+# === Keyword pool ===
 KEYWORDS = [
     "crypto wallet", "how to buy bitcoin", "passive income ideas", "affiliate marketing tutorial",
     "make money online", "credit repair tricks", "get out of debt", "keto diet plan", "intermittent fasting",
@@ -50,11 +49,19 @@ def get_video_details(video_id):
     return None
 
 def get_related_videos(video_id):
-    res = youtube.search().list(relatedToVideoId=video_id, part="snippet", type="video", maxResults=10).execute()
-    return res.get("items", [])
+    try:
+        res = youtube.search().list(
+            part="snippet",
+            relatedToVideoId=video_id,
+            type="video",
+            maxResults=10
+        ).execute()
+        return res.get("items", [])
+    except Exception as e:
+        print(f"❌ Error fetching related videos: {e}")
+        return []
 
 def extract_links(text):
-    import re
     return re.findall(r'(https?://[^\s)]+)', text)
 
 def is_domain_available(domain):
