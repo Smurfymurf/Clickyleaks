@@ -117,33 +117,19 @@ def already_scanned(video_id):
     result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
     return len(result.data) > 0
 
-def record_video_only(video_id, video_meta):
-    try:
-        supabase.table("Clickyleaks").insert({
-            "video_id": video_id,
-            "video_title": video_meta["title"],
-            "video_url": video_meta["url"],
-            "scanned_at": datetime.utcnow().isoformat()
-        }).execute()
-    except Exception as e:
-        print(f"⚠️ Skipping duplicate video_id insert: {e}")
-
 def check_click_leak(link, video_meta, video_id):
     domain = urlparse(link).netloc.lower()
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
-        return False
-
-    is_available = is_domain_available(domain)
-    if not is_available:
-        print(f"🔴 Skipping unavailable domain: {domain}")
-        return False
+        return
 
     try:
         status = requests.head(link, timeout=5, allow_redirects=True).status_code
     except:
         status = 0
 
-    print(f"🟢 Available domain found: {domain} — adding to DB")
+    is_available = is_domain_available(domain)
+
+    print(f"🔍 Logging: {domain} (Available: {is_available})")
 
     record = {
         "domain": domain,
@@ -160,10 +146,8 @@ def check_click_leak(link, video_meta, video_id):
 
     try:
         supabase.table("Clickyleaks").insert(record).execute()
-        return True
     except Exception as e:
-        print(f"⚠️ Skipped duplicate: {e}")
-        return False
+        print(f"⚠️ Skipped duplicate video_id insert: {e}")
 
 def main():
     print("🚀 Clickyleaks scan started...")
@@ -187,14 +171,9 @@ def main():
             continue
 
         links = extract_links(details["description"])
-        processed = False
         for link in links:
-            if check_click_leak(link, details, video_id):
-                processed = True
-                break  # Stop after one successful leak
-
-        if not processed:
-            record_video_only(video_id, details)
+            check_click_leak(link, details, video_id)
+            break
 
         time.sleep(1)
 
