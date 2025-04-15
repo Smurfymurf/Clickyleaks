@@ -85,16 +85,32 @@ def extract_links(text):
     return re.findall(r'(https?://[^\s)]+)', text)
 
 def is_domain_available(domain):
+    root = domain.lower().strip()
+    if root.startswith("www."):
+        root = root[4:]
+    root = root.split("/")[0]  # remove any trailing path
+
     headers = {
         "Authorization": f"sso-key {GODADDY_API_KEY}:{GODADDY_API_SECRET}",
         "Accept": "application/json"
     }
+
+    print(f"🔍 Checking domain availability: {root}")
     try:
-        res = requests.get(f"https://api.godaddy.com/v1/domains/available?domain={domain}", headers=headers, timeout=5)
+        res = requests.get(
+            f"https://api.godaddy.com/v1/domains/available?domain={root}",
+            headers=headers,
+            timeout=6
+        )
         if res.status_code == 200:
-            return res.json().get("available", False)
+            data = res.json()
+            print(f"➡️ GoDaddy response for {root}: {data}")
+            return data.get("available", False)
+        else:
+            print(f"⚠️ GoDaddy error {res.status_code} for {root}")
     except Exception as e:
-        print(f"[GoDaddy Error] {e}")
+        print(f"❌ GoDaddy exception: {e}")
+
     return False
 
 def already_scanned(video_id):
