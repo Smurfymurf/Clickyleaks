@@ -3,7 +3,6 @@ from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
 import os
-from googleapiclient.discovery import build
 import re
 
 # === CONFIG ===
@@ -14,9 +13,8 @@ GODADDY_API_KEY = os.getenv("GODADDY_API_KEY")
 GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# === Keyword pool ===
+# === Affiliate-style keywords ===
 KEYWORDS = [
     "crypto wallet", "how to buy bitcoin", "passive income ideas", "affiliate marketing tutorial",
     "make money online", "credit repair tricks", "get out of debt", "keto diet plan", "intermittent fasting",
@@ -32,12 +30,26 @@ BLOCKED_DOMAINS = [
 ]
 
 def search_youtube(query):
-    res = youtube.search().list(q=query, part="snippet", maxResults=10, type="video").execute()
-    return res.get("items", [])
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "part": "snippet",
+        "q": query,
+        "type": "video",
+        "maxResults": 10,
+        "key": YOUTUBE_API_KEY
+    }
+    res = requests.get(url, params=params, timeout=10)
+    return res.json().get("items", [])
 
 def get_video_details(video_id):
-    res = youtube.videos().list(part="snippet,statistics", id=video_id).execute()
-    items = res.get("items", [])
+    url = "https://www.googleapis.com/youtube/v3/videos"
+    params = {
+        "part": "snippet,statistics",
+        "id": video_id,
+        "key": YOUTUBE_API_KEY
+    }
+    res = requests.get(url, params=params, timeout=10)
+    items = res.json().get("items", [])
     if items:
         item = items[0]
         return {
@@ -50,13 +62,17 @@ def get_video_details(video_id):
 
 def get_related_videos(video_id):
     try:
-        res = youtube.search().list(
-            part="snippet",
-            relatedToVideoId=video_id,
-            type="video",
-            maxResults=10
-        ).execute()
-        return res.get("items", [])
+        url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            "part": "snippet",
+            "relatedToVideoId": video_id,
+            "type": "video",
+            "maxResults": 10,
+            "key": YOUTUBE_API_KEY
+        }
+        res = requests.get(url, params=params, timeout=10)
+        res.raise_for_status()
+        return res.json().get("items", [])
     except Exception as e:
         print(f"❌ Error fetching related videos: {e}")
         return []
