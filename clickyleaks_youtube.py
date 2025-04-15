@@ -1,9 +1,8 @@
-import requests, time, random
+import requests, time, random, re
 from urllib.parse import urlparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 import os
-import re
 
 # === CONFIG ===
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
@@ -14,7 +13,6 @@ GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === Affiliate-style keywords ===
 KEYWORDS = [
     "crypto wallet", "how to buy bitcoin", "passive income ideas", "affiliate marketing tutorial",
     "make money online", "credit repair tricks", "get out of debt", "keto diet plan", "intermittent fasting",
@@ -29,17 +27,41 @@ BLOCKED_DOMAINS = [
     "discord.gg", "youtu.be"
 ]
 
-def search_youtube(query):
-    url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "part": "snippet",
-        "q": query,
-        "type": "video",
-        "maxResults": 10,
-        "key": YOUTUBE_API_KEY
-    }
-    res = requests.get(url, params=params, timeout=10)
-    return res.json().get("items", [])
+def get_random_published_before():
+    # Random date between now and 10 years ago
+    days_ago = random.randint(10, 3650)
+    date = datetime.utcnow() - timedelta(days=days_ago)
+    return date.isoformat("T") + "Z"
+
+def search_youtube(query, max_pages=5):
+    videos = []
+    published_before = get_random_published_before()
+    page_token = None
+
+    for _ in range(max_pages):
+        url = "https://www.googleapis.com/youtube/v3/search"
+        params = {
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "maxResults": 10,
+            "order": "relevance",
+            "publishedBefore": published_before,
+            "key": YOUTUBE_API_KEY
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        res = requests.get(url, params=params, timeout=10)
+        data = res.json()
+        items = data.get("items", [])
+        videos.extend(items)
+
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+
+    return videos
 
 def get_video_details(video_id):
     url = "https://www.googleapis.com/youtube/v3/videos"
@@ -60,23 +82,6 @@ def get_video_details(video_id):
         }
     return None
 
-def get_related_videos(video_id):
-    try:
-        url = "https://www.googleapis.com/youtube/v3/search"
-        params = {
-            "part": "snippet",
-            "relatedToVideoId": video_id,
-            "type": "video",
-            "maxResults": 10,
-            "key": YOUTUBE_API_KEY
-        }
-        res = requests.get(url, params=params, timeout=10)
-        res.raise_for_status()
-        return res.json().get("items", [])
-    except Exception as e:
-        print(f"❌ Error fetching related videos: {e}")
-        return []
-
 def extract_links(text):
     return re.findall(r'(https?://[^\s)]+)', text)
 
@@ -93,7 +98,11 @@ def is_domain_available(domain):
         print(f"[GoDaddy Error] {e}")
     return False
 
-def check_click_leak(link, video_meta):
+def already_scanned(video_id):
+    result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
+    return len(result.data) > 0
+
+def check_click_leak(link, video_meta, video_id):
     domain = urlparse(link).netloc.lower()
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
         return
@@ -110,16 +119,16 @@ def check_click_leak(link, video_meta):
         record = {
             "domain": domain,
             "full_url": link,
+            "video_id": video_id,
             "video_title": video_meta["title"],
             "video_url": video_meta["url"],
             "http_status": status,
             "is_available": is_available,
             "view_count": video_meta["view_count"],
-            "discovered_at": datetime.utcnow().isoformat()
+            "discovered_at": datetime.utcnow().isoformat(),
+            "scanned_at": datetime.utcnow().isoformat()
         }
-        existing = supabase.table("Clickyleaks").select("id").eq("domain", domain).eq("video_url", video_meta["url"]).execute()
-        if len(existing.data) == 0:
-            supabase.table("Clickyleaks").insert(record).execute()
+        supabase.table("Clickyleaks").insert(record).execute()
 
 def main():
     print("🚀 Clickyleaks scan started...")
@@ -131,22 +140,21 @@ def main():
         print("No results found.")
         return
 
-    picked = random.choice(results)
-    video_id = picked["id"]["videoId"]
-    details = get_video_details(video_id)
-    if not details:
-        return
+    random.shuffle(results)
 
-    related = get_related_videos(video_id)
-
-    for vid in related:
-        vid_id = vid["id"]["videoId"]
-        info = get_video_details(vid_id)
-        if not info:
+    for result in results:
+        video_id = result["id"]["videoId"]
+        if already_scanned(video_id):
             continue
-        links = extract_links(info["description"])
+
+        details = get_video_details(video_id)
+        if not details:
+            continue
+
+        links = extract_links(details["description"])
         for link in links:
-            check_click_leak(link, info)
+            check_click_leak(link, details, video_id)
+
         time.sleep(1)
 
     print("✅ Scan complete.")
