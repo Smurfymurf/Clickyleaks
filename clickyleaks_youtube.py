@@ -75,9 +75,9 @@ def check_click_leak(link, video_meta):
             "discovered_at": datetime.utcnow().isoformat()
         }
         # Prevent duplicates
-        existing = supabase.table("clickyleaks").select("id").eq("domain", domain).eq("video_url", video_meta["url"]).execute()
+        existing = supabase.table("Clickyleaks").select("id").eq("domain", domain).eq("video_url", video_meta["url"]).execute()
         if len(existing.data) == 0:
-            supabase.table("clickyleaks").insert(record).execute()
+            supabase.table("Clickyleaks").insert(record).execute()
 
 def main():
     print("🚀 Clickyleaks scan started...")
