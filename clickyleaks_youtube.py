@@ -53,9 +53,7 @@ def search_youtube(query, max_pages=5):
 
         res = requests.get(url, params=params, timeout=10)
         data = res.json()
-        items = data.get("items", [])
-        videos.extend(items)
-
+        videos += data.get("items", [])
         page_token = data.get("nextPageToken")
         if not page_token:
             break
@@ -103,14 +101,9 @@ def is_domain_available(domain):
             timeout=6
         )
         if res.status_code == 200:
-            data = res.json()
-            print(f"➡️ GoDaddy response for {root}: {data}")
-            return data.get("available", False)
-        else:
-            print(f"⚠️ GoDaddy error {res.status_code} for {root}")
+            return res.json().get("available", False)
     except Exception as e:
         print(f"❌ GoDaddy exception: {e}")
-
     return False
 
 def already_scanned(video_id):
@@ -122,9 +115,8 @@ def check_click_leak(link, video_meta, video_id):
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
         return
 
-    is_available = is_domain_available(domain)
-    if not is_available:
-        print(f"🔴 Skipping unavailable domain: {domain}")
+    if not is_domain_available(domain):
+        print(f"🔴 Domain unavailable: {domain}")
         return
 
     try:
@@ -141,7 +133,7 @@ def check_click_leak(link, video_meta, video_id):
         "video_title": video_meta["title"],
         "video_url": video_meta["url"],
         "http_status": status,
-        "is_available": is_available,
+        "is_available": True,
         "view_count": video_meta["view_count"],
         "discovered_at": datetime.utcnow().isoformat(),
         "scanned_at": datetime.utcnow().isoformat()
@@ -150,7 +142,7 @@ def check_click_leak(link, video_meta, video_id):
     try:
         supabase.table("Clickyleaks").insert(record).execute()
     except Exception as e:
-        print(f"⚠️ Skipped duplicate: {e}")
+        print(f"⚠️ DB insert error: {e}")
 
 def main():
     print("🚀 Clickyleaks scan started...")
@@ -159,7 +151,7 @@ def main():
     results = search_youtube(keyword)
 
     if not results:
-        print("No results found.")
+        print("❌ No search results.")
         return
 
     random.shuffle(results)
@@ -176,7 +168,7 @@ def main():
         links = extract_links(details["description"])
         for link in links:
             check_click_leak(link, details, video_id)
-            break  # optional: process only 1 link per video
+            break  # One link per video
 
         time.sleep(1)
 
