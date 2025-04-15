@@ -1,4 +1,4 @@
-import requests, whois, time
+import requests, time
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
@@ -9,9 +9,11 @@ from googleapiclient.discovery import build
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+GODADDY_API_KEY = os.getenv("GODADDY_API_KEY")
+GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET")
+
 KEYWORDS = ["crypto wallet", "keto diet", "credit repair", "free stocks", "ai tools"]
 
-# Domains to ignore (known platforms, shorteners, redirectors)
 BLOCKED_DOMAINS = [
     "amzn.to", "bit.ly", "t.co", "youtube.com", "instagram.com",
     "linktr.ee", "rumble.com", "facebook.com", "twitter.com",
@@ -54,16 +56,25 @@ def extract_links(text):
     return re.findall(r'(https?://[^\s)]+)', text)
 
 def is_domain_available(domain):
+    headers = {
+        "Authorization": f"sso-key {GODADDY_API_KEY}:{GODADDY_API_SECRET}",
+        "Accept": "application/json"
+    }
     try:
-        info = whois.whois(domain)
-        return not bool(info.domain_name)
-    except:
-        return True
+        response = requests.get(
+            f"https://api.godaddy.com/v1/domains/available?domain={domain}",
+            headers=headers,
+            timeout=5
+        )
+        if response.status_code == 200:
+            return response.json().get("available", False)
+    except Exception as e:
+        print(f"[GoDaddy API Error] {e}")
+    return False
 
 def check_click_leak(link, video_meta):
     domain = urlparse(link).netloc.lower()
 
-    # Skip blocked domains
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
         return
 
@@ -87,7 +98,6 @@ def check_click_leak(link, video_meta):
             "view_count": video_meta["view_count"],
             "discovered_at": datetime.utcnow().isoformat()
         }
-        # Prevent duplicates
         existing = supabase.table("Clickyleaks").select("id").eq("domain", domain).eq("video_url", video_meta["url"]).execute()
         if len(existing.data) == 0:
             supabase.table("Clickyleaks").insert(record).execute()
