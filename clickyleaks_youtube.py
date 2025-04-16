@@ -1,183 +1,112 @@
-import requests, time, random, re
-from urllib.parse import urlparse
-from datetime import datetime, timedelta
-from supabase import create_client, Client
 import os
+import re
+import uuid
+import socket
+import dns.resolver
+import requests
+import random
+import time
+from datetime import datetime
+from pytz import UTC
+from supabase import create_client, Client
+from googleapiclient.discovery import build
 
-# === CONFIG ===
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+# Supabase config
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-GODADDY_API_KEY = os.getenv("GODADDY_API_KEY")
-GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET")
-
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# YouTube API config
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+
+# DNS resolver setup
+resolver = dns.resolver.Resolver()
+resolver.nameservers = ['8.8.8.8']  # Google DNS
+
+# Keywords to search
 KEYWORDS = [
-    "crypto wallet", "how to buy bitcoin", "passive income ideas", "affiliate marketing tutorial",
-    "make money online", "credit repair tricks", "get out of debt", "keto diet plan", "intermittent fasting",
-    "fat burners", "how to lose belly fat", "greens powder review", "natural supplements", "ai tools for work",
-    "make money with chatgpt", "ai video generator", "top ai websites", "best copywriting course", "learn coding free",
-    "productivity apps", "best chrome extensions", "amazon coupon hacks", "cashback app reviews", "drop shipping tutorial"
+    "affiliate marketing tutorial", "make money online", "start a blog", "best vpn deals",
+    "free hosting", "cashback sites", "product review", "how to save money shopping",
+    "passive income", "crypto affiliate", "web hosting affiliate", "cheap domain names",
+    "email marketing tools", "best ai tools", "learn coding free"
 ]
-
-BLOCKED_DOMAINS = [
-    "amzn.to", "bit.ly", "t.co", "youtube.com", "instagram.com", "linktr.ee",
-    "rumble.com", "facebook.com", "twitter.com", "linkedin.com", "paypal.com",
-    "discord.gg", "youtu.be"
-]
-
-def get_random_published_before():
-    days_ago = random.randint(10, 3650)
-    date = datetime.utcnow() - timedelta(days=days_ago)
-    return date.isoformat("T") + "Z"
-
-def search_youtube(query, max_pages=5):
-    videos = []
-    published_before = get_random_published_before()
-    page_token = None
-
-    for _ in range(max_pages):
-        url = "https://www.googleapis.com/youtube/v3/search"
-        params = {
-            "part": "snippet",
-            "q": query,
-            "type": "video",
-            "maxResults": 10,
-            "order": "relevance",
-            "publishedBefore": published_before,
-            "key": YOUTUBE_API_KEY
-        }
-        if page_token:
-            params["pageToken"] = page_token
-
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
-        items = data.get("items", [])
-        videos.extend(items)
-
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-
-    return videos
-
-def get_video_details(video_id):
-    url = "https://www.googleapis.com/youtube/v3/videos"
-    params = {
-        "part": "snippet,statistics",
-        "id": video_id,
-        "key": YOUTUBE_API_KEY
-    }
-    res = requests.get(url, params=params, timeout=10)
-    items = res.json().get("items", [])
-    if items:
-        item = items[0]
-        return {
-            "title": item["snippet"]["title"],
-            "description": item["snippet"]["description"],
-            "url": f"https://www.youtube.com/watch?v={video_id}",
-            "view_count": int(item["statistics"].get("viewCount", 0))
-        }
-    return None
-
-def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text)
 
 def is_domain_available(domain):
-    root = domain.lower().strip()
-    if root.startswith("www."):
-        root = root[4:]
-    root = root.split("/")[0]
-
-    headers = {
-        "Authorization": f"sso-key {GODADDY_API_KEY}:{GODADDY_API_SECRET}",
-        "Accept": "application/json"
-    }
-
-    print(f"🔍 Checking domain availability: {root}")
+    domain = domain.replace("http://", "").replace("https://", "").replace("www.", "").strip("/")
     try:
-        res = requests.get(
-            f"https://api.godaddy.com/v1/domains/available?domain={root}",
-            headers=headers,
-            timeout=6
-        )
-        if res.status_code == 200:
-            data = res.json()
-            print(f"➡️ GoDaddy response for {root}: {data}")
-            return data.get("available", False)
-        else:
-            print(f"⚠️ GoDaddy error {res.status_code} for {root}")
-    except Exception as e:
-        print(f"❌ GoDaddy exception: {e}")
+        answers = resolver.resolve(domain, 'A')
+        if answers:
+            return False
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers, dns.exception.Timeout):
+        pass
 
-    return False
+    try:
+        socket.gethostbyname(domain)
+        return False
+    except socket.gaierror:
+        return True
 
-def already_scanned(video_id):
-    result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
-    return len(result.data) > 0
+def extract_domains(text):
+    urls = re.findall(r'https?://[\w.-]+(?:\.[a-z]{2,})+', text)
+    return [url.split("//")[-1].split("/")[0] for url in urls]
 
-def check_click_leak(link, video_meta, video_id):
-    domain = urlparse(link).netloc.lower()
-    if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
-        return
+def already_checked(video_id):
+    response = supabase.table("Clickyleaks_YouTube").select("video_id").eq("video_id", video_id).execute()
+    return len(response.data) > 0
 
+def save_to_supabase(video_data, domain):
     is_available = is_domain_available(domain)
-
-    try:
-        status = requests.head(link, timeout=5, allow_redirects=True).status_code
-    except:
-        status = 0
-
-    print(f"{'🟢' if is_available else '🔴'} Logging domain: {domain}")
-
-    record = {
+    entry = {
+        "id": str(uuid.uuid4()),
+        "video_id": video_data['id'],
+        "video_url": f"https://www.youtube.com/watch?v={video_data['id']}",
+        "title": video_data['title'],
+        "views": video_data['views'],
         "domain": domain,
-        "full_url": link,
-        "video_id": video_id,
-        "video_title": video_meta["title"],
-        "video_url": video_meta["url"],
-        "http_status": status,
-        "is_available": is_available,
-        "view_count": video_meta["view_count"],
-        "discovered_at": datetime.utcnow().isoformat(),
-        "scanned_at": datetime.utcnow().isoformat()
+        "available": is_available,
+        "created_at": datetime.now(UTC).isoformat()
     }
+    supabase.table("Clickyleaks_YouTube").insert(entry).execute()
+    print(f"{'✅' if is_available else '🔴'} Logged domain: {domain}")
 
-    try:
-        supabase.table("Clickyleaks").insert(record).execute()
-    except Exception as e:
-        print(f"⚠️ Skipping duplicate video_id insert: {e}")
-
-def main():
+def search_and_log():
     print("🚀 Clickyleaks scan started...")
     keyword = random.choice(KEYWORDS)
     print(f"🔎 Searching: {keyword}")
-    results = search_youtube(keyword)
+    
+    search_response = youtube.search().list(
+        q=keyword,
+        part="snippet",
+        type="video",
+        maxResults=10
+    ).execute()
 
-    if not results:
-        print("No results found.")
-        return
-
-    random.shuffle(results)
-
-    for result in results:
-        video_id = result["id"]["videoId"]
-        if already_scanned(video_id):
+    for item in search_response.get("items", []):
+        video_id = item["id"]["videoId"]
+        if already_checked(video_id):
             continue
 
-        details = get_video_details(video_id)
-        if not details:
+        video_details = youtube.videos().list(
+            part="snippet,statistics",
+            id=video_id
+        ).execute()
+
+        if not video_details["items"]:
             continue
 
-        links = extract_links(details["description"])
-        for link in links:
-            check_click_leak(link, details, video_id)
-            break  # optional: just check 1 link per video
+        snippet = video_details["items"][0]["snippet"]
+        stats = video_details["items"][0].get("statistics", {})
+        description = snippet.get("description", "")
+        domains = extract_domains(description)
 
-        time.sleep(1)
-
-    print("✅ Scan complete.")
+        for domain in set(domains):
+            save_to_supabase({
+                "id": video_id,
+                "title": snippet.get("title", ""),
+                "views": int(stats.get("viewCount", 0))
+            }, domain)
+            time.sleep(1.5)
 
 if __name__ == "__main__":
-    main()
+    search_and_log()
