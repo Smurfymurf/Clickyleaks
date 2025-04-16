@@ -1,120 +1,105 @@
-import csv, random, requests, time, re
-from datetime import datetime
+import requests, time, random, re, os
 from urllib.parse import urlparse
+from datetime import datetime
 from supabase import create_client, Client
-import os
+import pandas as pd
 
-# === ENV CONFIG ===
+# === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+BLOCKED_DOMAINS = ["amzn.to", "bit.ly", "t.co", "youtube.com", "instagram.com", "linktr.ee", "rumble.com",
+                   "facebook.com", "twitter.com", "linkedin.com", "paypal.com", "discord.gg", "youtu.be"]
 
-# === Load pre-downloaded YouTube video IDs ===
-with open("youtube8m_video_ids_subset.csv", newline="") as f:
-    reader = csv.reader(f)
-    VIDEO_IDS = [row[0] for row in reader if row]
+# Load a subset of video IDs (assuming CSV is pre-downloaded)
+video_df = pd.read_csv("youtube8m_video_ids_subset.csv")
+video_ids = video_df["video_id"].dropna().tolist()
+random.shuffle(video_ids)
 
-# === Domain checker ===
-def is_domain_available(domain):
+
+def already_scanned(video_id):
     try:
-        res = requests.get(f"http://{domain}", timeout=4)
+        result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
+        return len(result.data) > 0
+    except:
+        return False
+
+
+def extract_links(text):
+    return re.findall(r'(https?://[^\s)]+)', text)
+
+
+def is_domain_available(domain):
+    domain = domain.lower().strip().replace("www.", "").split("/")[0]
+    try:
+        res = requests.get(f"http://{domain}", timeout=5)
         return False
     except:
         return True
 
-# === Discord Alert ===
+
 def notify_discord(message):
-    if not DISCORD_WEBHOOK_URL:
-        return
     try:
         requests.post(DISCORD_WEBHOOK_URL, json={"content": message}, timeout=5)
-    except Exception as e:
-        print(f"⚠️ Discord webhook error: {e}")
+    except:
+        pass
 
-# === Already scanned? ===
-def already_scanned(video_id):
-    result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
-    return len(result.data) > 0
 
-# === Extract links from description ===
-def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text)
+def process_video(video_id):
+    if already_scanned(video_id):
+        return False
 
-# === Log domain ===
-def log_domain(link, domain, video_id, title, view_count, is_available):
+    url = f"https://www.youtube.com/watch?v={video_id}"
     try:
-        supabase.table("Clickyleaks").insert({
+        res = requests.get(url, timeout=8)
+        html = res.text
+        links = extract_links(html)
+    except:
+        return False
+
+    for link in links:
+        domain = urlparse(link).netloc.lower()
+        if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
+            continue
+
+        available = is_domain_available(domain)
+        record = {
             "domain": domain,
             "full_url": link,
             "video_id": video_id,
-            "video_title": title,
-            "video_url": f"https://www.youtube.com/watch?v={video_id}",
-            "http_status": 0,
-            "is_available": is_available,
-            "view_count": view_count,
+            "video_url": url,
+            "is_available": available,
             "discovered_at": datetime.utcnow().isoformat(),
             "scanned_at": datetime.utcnow().isoformat()
-        }).execute()
+        }
+        supabase.table("Clickyleaks").insert(record).execute()
 
-        if is_available:
-            notify_discord(f"🎯 Found available domain: `{domain}`\nFrom video: https://www.youtube.com/watch?v={video_id}")
+        if available:
+            notify_discord(f"🔥 Available domain found: {domain}\n🔗 {link}\n🎥 {url}")
+        return True
 
-    except Exception as e:
-        print(f"⚠️ Logging error: {e}")
+    return False
 
-# === Get video metadata from oEmbed ===
-def get_video_meta(video_id):
-    try:
-        res = requests.get(f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json", timeout=6)
-        if res.status_code == 200:
-            data = res.json()
-            return {
-                "title": data.get("title", "Unknown title"),
-                "author": data.get("author_name", "Unknown"),
-                "view_count": 0  # Can't get actual views without API
-            }
-    except:
-        pass
-    return None
 
-# === Process each video ===
-def process_video(video_id):
-    if already_scanned(video_id):
-        return
-
-    print(f"🔍 Checking: https://www.youtube.com/watch?v={video_id}")
-    meta = get_video_meta(video_id)
-    if not meta:
-        return
-
-    try:
-        res = requests.get(f"https://www.youtube.com/watch?v={video_id}", timeout=8)
-        matches = extract_links(res.text)
-        for link in matches:
-            domain = urlparse(link).netloc.lower()
-            is_available = is_domain_available(domain)
-            print(f"🔍 Logging domain: {domain} | Available: {is_available}")
-            log_domain(link, domain, video_id, meta["title"], meta["view_count"], is_available)
-            break
-    except Exception as e:
-        print(f"❌ Error processing video {video_id}: {e}")
-
-# === MAIN ===
 def main():
     print("🚀 Clickyleaks Random Scanner Started...")
-
-    sample = random.sample(VIDEO_IDS, 250)
     found = 0
-
-    for vid in sample:
-        process_video(vid)
-        time.sleep(random.uniform(0.5, 1.2))  # Polite delay
-        found += 1
+    for vid in video_ids[:250]:
+        print(f"🔍 Checking: https://www.youtube.com/watch?v={vid}")
+        try:
+            if process_video(vid):
+                found += 1
+        except Exception as e:
+            print(f"❌ Error processing video {vid}: {e}")
+        time.sleep(0.5)
 
     if found == 0:
-        notify_discord("⚠️ Clickyleaks scanner ran but found no domains.")
+        notify_discord("❌ No available domains found in this run.")
+    else:
+        notify_discord(f"✅ Run complete: {found} domain(s) found.")
+
 
 if __name__ == "__main__":
     main()
