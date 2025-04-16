@@ -50,7 +50,7 @@ def search_youtube(query, max_pages=10):
     published_before = get_random_published_before()
     page_token = None
 
-    for _ in range(max_pages):
+    for page in range(max_pages):
         url = "https://www.googleapis.com/youtube/v3/search"
         params = {
             "part": "snippet",
@@ -64,13 +64,27 @@ def search_youtube(query, max_pages=10):
         if page_token:
             params["pageToken"] = page_token
 
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
-        items = data.get("items", [])
-        videos.extend(items)
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
+        print(f"📡 Requesting page {page+1} for keyword: {query}")
+        print(f"🔗 URL: {url}")
+        print(f"📦 Params: {params}")
+
+        try:
+            res = requests.get(url, params=params, timeout=10)
+            if res.status_code != 200:
+                print(f"❌ API error: {res.status_code} — {res.text}")
+                return []
+
+            data = res.json()
+            items = data.get("items", [])
+            print(f"📥 {len(items)} videos found in this page.")
+            videos.extend(items)
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+        except Exception as e:
+            print(f"❌ Exception in YouTube search: {e}")
+            return []
 
     return videos
 
