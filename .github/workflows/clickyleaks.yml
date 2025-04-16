@@ -2,7 +2,7 @@ name: Clickyleaks YouTube Scraper
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Every 20 minutes
+    - cron: '*/20 * * * *'  # Every 20 minutes
   workflow_dispatch:
 
 jobs:
@@ -25,9 +25,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        if [ -f requirements.txt ]; then
-          pip install -r requirements.txt
-        fi
+        pip install --upgrade pip
         pip install dnspython pytz supabase pycountry
 
     - name: Run Clickyleaks script
