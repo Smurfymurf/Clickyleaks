@@ -1,24 +1,33 @@
-import requests, time, random, re, socket
+import requests, time, random, re
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 import os
-import traceback
 
 # === CONFIG ===
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 KEYWORDS = [
-    "crypto wallet", "how to buy bitcoin", "passive income ideas", "affiliate marketing tutorial",
-    "make money online", "credit repair tricks", "get out of debt", "keto diet plan", "intermittent fasting",
-    "fat burners", "how to lose belly fat", "greens powder review", "natural supplements", "ai tools for work",
-    "make money with chatgpt", "ai video generator", "top ai websites", "best copywriting course", "learn coding free",
-    "productivity apps", "best chrome extensions", "amazon coupon hacks", "cashback app reviews", "drop shipping tutorial"
+    "best crypto wallets for beginners", "affiliate landing page examples", "how to make money from home 2024",
+    "passive income with AI", "weight loss affiliate programs", "best ai tools for content creation",
+    "cheapest domain hosting", "2023 clickbank tutorial", "earn bitcoin free", "cheap website builder reviews",
+    "fat burner amazon review", "affiliate link cloaking tutorial", "how to create a sales funnel",
+    "ai money making methods", "keto diet affiliate", "buy expired domains tutorial",
+    "best hosting for affiliate websites", "get paid to write articles", "ai to make money online",
+    "how to use chatgpt for side income", "top clickbank products 2024", "high commission affiliate offers",
+    "best landing page builders 2024", "youtube automation money", "email marketing for beginners",
+    "free crypto airdrops", "make $100/day with AI", "easy affiliate programs to join",
+    "viral giveaway tool", "print on demand affiliate tips", "fastest way to grow email list",
+    "how to start an affiliate blog", "best ad networks for bloggers", "top weight loss offers 2024",
+    "free course hosting platform", "ai tools for dropshipping", "buying backlinks tutorial",
+    "affiliate tiktok page", "how to promote affiliate links on Reddit", "high traffic expired domains",
+    "best AI content tools", "make money on autopilot", "drop servicing 2024", "no face youtube channel ideas",
+    "best niches for affiliate", "seo for affiliate marketers", "chatgpt affiliate prompts",
+    "get free leads fast", "money making hacks online", "turn blog into cashflow"
 ]
 
 BLOCKED_DOMAINS = [
@@ -27,18 +36,12 @@ BLOCKED_DOMAINS = [
     "discord.gg", "youtu.be"
 ]
 
-def send_discord_message(message):
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": message}, timeout=5)
-    except Exception as e:
-        print(f"⚠️ Discord webhook failed: {e}")
-
 def get_random_published_before():
     days_ago = random.randint(10, 3650)
     date = datetime.utcnow() - timedelta(days=days_ago)
     return date.isoformat("T") + "Z"
 
-def search_youtube(query, max_pages=5):
+def search_youtube(query, max_pages=10):
     videos = []
     published_before = get_random_published_before()
     page_token = None
@@ -90,49 +93,29 @@ def get_video_details(video_id):
 def extract_links(text):
     return re.findall(r'(https?://[^\s)]+)', text)
 
-def already_scanned_video(video_id):
-    result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
-    return len(result.data) > 0
-
-def already_scanned_domain(domain):
-    result = supabase.table("Clickyleaks").select("id").eq("domain", domain).execute()
-    return len(result.data) > 0
-
 def is_domain_available(domain):
-    try:
-        socket.setdefaulttimeout(3)
-        socket.gethostbyname(domain)
-        return False  # If DNS resolves, domain is taken
-    except socket.error:
-        return True
+    root = domain.lower().strip()
+    if root.startswith("www."):
+        root = root[4:]
+    root = root.split("/")[0]
 
-def log_click_leak(domain, link, video_meta, video_id, status, available):
-    print(f"🔴 Logging domain: {domain} (Available: {available})")
-    record = {
-        "domain": domain,
-        "full_url": link,
-        "video_id": video_id,
-        "video_title": video_meta["title"],
-        "video_url": video_meta["url"],
-        "http_status": status,
-        "is_available": available,
-        "view_count": video_meta["view_count"],
-        "discovered_at": datetime.utcnow().isoformat(),
-        "scanned_at": datetime.utcnow().isoformat()
+    headers = {
+        "Accept": "application/json"
     }
 
     try:
-        supabase.table("Clickyleaks").insert(record).execute()
-    except Exception as e:
-        print(f"⚠️ Insert error: {e}")
+        res = requests.get(f"http://{root}", timeout=5)
+        return False
+    except:
+        return True
 
-def process_link(link, video_meta, video_id, available_domains):
-    domain = urlparse(link).netloc.lower().replace("www.", "")
+def already_scanned(video_id):
+    result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
+    return len(result.data) > 0
+
+def check_click_leak(link, video_meta, video_id):
+    domain = urlparse(link).netloc.lower()
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
-        return
-
-    if already_scanned_domain(domain):
-        print(f"⚠️ Skipping already-scanned domain: {domain}")
         return
 
     try:
@@ -141,54 +124,56 @@ def process_link(link, video_meta, video_id, available_domains):
         status = 0
 
     is_available = is_domain_available(domain)
-    log_click_leak(domain, link, video_meta, video_id, status, is_available)
 
-    if is_available:
-        available_domains.append(f"🟢 `{domain}` - {video_meta['title']}")
+    print(f"🔍 Logging: {domain} (Available: {is_available})")
+
+    record = {
+        "domain": domain,
+        "full_url": link,
+        "video_id": video_id,
+        "video_title": video_meta["title"],
+        "video_url": video_meta["url"],
+        "http_status": status,
+        "is_available": is_available,
+        "view_count": video_meta["view_count"],
+        "discovered_at": datetime.utcnow().isoformat(),
+        "scanned_at": datetime.utcnow().isoformat()
+    }
+
+    try:
+        supabase.table("Clickyleaks").insert(record).execute()
+    except Exception as e:
+        print(f"⚠️ Skipped duplicate video_id insert: {e}")
 
 def main():
-    try:
-        print("🚀 Clickyleaks scan started...")
-        keyword = random.choice(KEYWORDS)
-        print(f"🔎 Searching: {keyword}")
-        results = search_youtube(keyword)
+    print("🚀 Clickyleaks scan started...")
+    keyword = random.choice(KEYWORDS)
+    print(f"🔎 Searching: {keyword}")
+    results = search_youtube(keyword)
 
-        if not results:
-            print("No results found.")
-            send_discord_message(f"⚠️ Clickyleaks scan failed. No YouTube results for keyword: `{keyword}`.")
-            return
+    if not results:
+        print("No results found.")
+        return
 
-        random.shuffle(results)
-        available_domains = []
+    random.shuffle(results)
 
-        for result in results:
-            video_id = result["id"]["videoId"]
-            if already_scanned_video(video_id):
-                continue
+    for result in results:
+        video_id = result["id"]["videoId"]
+        if already_scanned(video_id):
+            continue
 
-            video_meta = get_video_details(video_id)
-            if not video_meta:
-                continue
+        details = get_video_details(video_id)
+        if not details:
+            continue
 
-            links = extract_links(video_meta["description"])
-            for link in links:
-                process_link(link, video_meta, video_id, available_domains)
-                break  # Only check first link per video
+        links = extract_links(details["description"])
+        for link in links:
+            check_click_leak(link, details, video_id)
+            break
 
-            time.sleep(1)
+        time.sleep(1)
 
-        if available_domains:
-            message = "**✅ Clickyleaks Scan Complete — Available Domains Found!**\n" + "\n".join(available_domains)
-        else:
-            message = "✅ Clickyleaks scan complete. No available domains found."
-
-        send_discord_message(message)
-        print("✅ Scan finished.")
-
-    except Exception as e:
-        error_details = traceback.format_exc()
-        print(f"❌ Script error: {e}")
-        send_discord_message(f"❌ Clickyleaks scan failed with error:\n```\n{error_details[:1800]}\n```")
+    print("✅ Scan complete.")
 
 if __name__ == "__main__":
     main()
