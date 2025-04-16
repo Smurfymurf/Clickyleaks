@@ -1,20 +1,16 @@
-name: Clickyleaks Random YouTube
-
-description: >
-  Scans randomly downloaded YouTube-8M shards for video links and logs any domains found,
-  checking for availability and notifying via Discord if a good one is found.
+name: Clickyleaks Random YouTube Mirror
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Runs every hour
+    - cron: '0 * * * *'  # every hour
   workflow_dispatch:
 
 jobs:
-  scan:
+  run-random-scan:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -26,7 +22,7 @@ jobs:
         run: |
           pip install requests python-dotenv supabase dnspython pytz
 
-      - name: Run Random Scanner with Mirror Fallback
+      - name: Run Random Scanner (YouTube-8M Mirror)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
