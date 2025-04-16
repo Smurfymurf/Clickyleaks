@@ -3,5 +3,8 @@ python-whois
 requests
 supabase
 python-dotenv
+dnspython
+pytz
+
 
 
