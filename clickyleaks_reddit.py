@@ -1,119 +1,125 @@
 import requests, time, random, re, socket, dns.resolver
-from datetime import datetime
 from urllib.parse import urlparse
+from datetime import datetime
 from supabase import create_client, Client
 import os
 
-# === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-KEYWORDS = [
-    "affiliate", "make money", "passive income", "crypto", "bitcoin", "drop shipping",
-    "cashback", "get rich", "side hustle", "free traffic", "seo", "google ads", "email list"
+SUBREDDITS = [
+    "sidehustle", "workfromhome", "Entrepreneur", "digitalnomad", "passive_income",
+    "Affiliatemarketing", "Freelance", "SEO", "JustStart", "InternetIsBeautiful"
 ]
 
-SUBREDDITS = [
-    "workfromhome", "sidehustle", "Entrepreneur", "affiliatemarketing", "freelance", "smallbusiness",
-    "passive_income", "digital_marketing", "marketing", "seo", "emailmarketing", "CryptoCurrency",
-    "Bitcoin", "Ethereum", "cryptomarkets", "deals", "frugal", "hustle", "WorkOnline", "financialindependence"
+KEYWORDS = [
+    "make money", "side hustle", "affiliate link", "my blog", "check out my site",
+    "visit my website", "passive income", "use my referral", "join now", "how I earn"
 ]
 
 BLOCKED_DOMAINS = [
-    "reddit.com", "youtube.com", "bit.ly", "t.co", "facebook.com", "instagram.com", "twitter.com"
+    "youtube.com", "youtu.be", "facebook.com", "twitter.com", "reddit.com",
+    "instagram.com", "tiktok.com", "linkedin.com", "bit.ly", "linktr.ee"
 ]
 
-# === DOMAIN CHECK ===
-def is_domain_available(domain):
-    domain = domain.lower().strip()
-    if domain.startswith("www."):
-        domain = domain[4:]
-    domain = domain.split("/")[0]
+def send_discord_notification(message: str):
+    if not DISCORD_WEBHOOK_URL:
+        print("⚠️ No Discord webhook set.")
+        return
     try:
-        dns.resolver.resolve(domain, 'A')
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+    except Exception as e:
+        print(f"❌ Discord notification error: {e}")
+
+def get_pushshift_results(subreddit, keyword, retries=3):
+    for _ in range(retries):
+        try:
+            url = f"https://api.pushshift.io/reddit/search/comment/?q={keyword}&subreddit={subreddit}&size=50"
+            res = requests.get(url, timeout=10)
+            return res.json().get("data", [])
+        except Exception as e:
+            print(f"⏳ Retry Pushshift for {subreddit}/{keyword}: {e}")
+            time.sleep(2)
+    raise Exception(f"Pushshift failed after {retries} retries.")
+
+def extract_links(text):
+    return re.findall(r'(https?://[^\s)]+)', text)
+
+def domain_already_checked(domain):
+    result = supabase.table("Clickyleaks").select("id").eq("domain", domain).execute()
+    return len(result.data) > 0
+
+def is_domain_available(domain):
+    root = domain.lower().split("/")[0].replace("www.", "")
+    try:
+        socket.gethostbyname(root)
+        dns.resolver.resolve(root, 'A')
         return False
     except:
-        try:
-            socket.gethostbyname(domain)
-            return False
-        except:
-            return True
+        return True
 
-# === SUPABASE ===
-def domain_already_logged(domain):
-    domain = domain.lower()
-    res = supabase.table("Clickyleaks_Reddit").select("id").eq("domain", domain).execute()
-    return len(res.data) > 0
-
-def log_domain(data):
+def log_domain(domain, full_url, source, is_available):
     try:
-        supabase.table("Clickyleaks_Reddit").insert(data).execute()
+        supabase.table("Clickyleaks").insert({
+            "domain": domain,
+            "full_url": full_url,
+            "video_id": None,
+            "video_title": f"Reddit ({source})",
+            "video_url": f"https://reddit.com/r/{source}",
+            "http_status": None,
+            "is_available": is_available,
+            "view_count": None,
+            "discovered_at": datetime.utcnow().isoformat(),
+            "scanned_at": datetime.utcnow().isoformat()
+        }).execute()
     except Exception as e:
-        print(f"⚠️ Failed to log to Supabase: {e}")
+        print(f"⚠️ Insert error: {e}")
 
-# === DISCORD ===
-def send_discord(message):
-    try:
-        requests.post(DISCORD_WEBHOOK, json={"content": message})
-    except:
-        pass
-
-# === MAIN ===
 def run_scan():
-    start_time = time.time()
-    found = 0
-    scanned = 0
+    print("🚀 Clickyleaks Reddit Scan Started...")
+    start = time.time()
+    found, available = 0, 0
 
-    for _ in range(100):
-        keyword = random.choice(KEYWORDS)
-        subreddit = random.choice(SUBREDDITS)
+    subreddit = random.choice(SUBREDDITS)
+    keyword = random.choice(KEYWORDS)
 
-        url = f"https://api.pushshift.io/reddit/search/submission/?q={keyword}&subreddit={subreddit}&size=100"
-        print(f"🔍 {subreddit} — {keyword}")
-        res = requests.get(url, timeout=10)
-        posts = res.json().get("data", [])
+    print(f"🔍 {subreddit} — {keyword}")
+    try:
+        results = get_pushshift_results(subreddit, keyword)
+    except Exception as e:
+        send_discord_notification(f"❌ Reddit scan failed: {e}")
+        raise
 
-        for post in posts:
-            scanned += 1
-            text = post.get("selftext", "") + " " + post.get("url", "")
-            links = re.findall(r'(https?://[^\s)]+)', text)
+    for post in results:
+        body = post.get("body", "")
+        links = extract_links(body)
+        for link in links:
+            domain = urlparse(link).netloc.lower()
+            if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
+                continue
+            if domain_already_checked(domain):
+                continue
 
-            for link in links:
-                domain = urlparse(link).netloc.lower()
-                if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
-                    continue
+            found += 1
+            is_avail = is_domain_available(domain)
+            if is_avail:
+                available += 1
+                print(f"🟢 AVAILABLE: {domain}")
+            else:
+                print(f"🔴 Taken: {domain}")
 
-                if domain_already_logged(domain):
-                    continue
+            log_domain(domain, link, subreddit, is_avail)
 
-                available = is_domain_available(domain)
-
-                log_domain({
-                    "domain": domain,
-                    "full_url": link,
-                    "post_title": post.get("title"),
-                    "post_url": f"https://reddit.com{post.get('permalink', '')}",
-                    "subreddit": subreddit,
-                    "is_available": available,
-                    "created_utc": datetime.utcnow().isoformat()
-                })
-
-                if available:
-                    found += 1
-                    print(f"✅ Found available domain: {domain}")
-                    send_discord(f"🔥 Available domain from Reddit: {domain} ({subreddit})")
-
-                break
-
-    duration = int(time.time() - start_time)
-    send_discord(f"✅ Reddit scan complete. Scanned: {scanned}, Found available: {found}, Duration: {duration}s")
+    duration = round(time.time() - start)
+    msg = f"✅ Reddit scan done.\n**Keyword:** `{keyword}`\n**Subreddit:** `{subreddit}`\n**Found:** {found}\n**Available:** {available}\n⏱️ {duration}s"
+    send_discord_notification(msg)
 
 if __name__ == "__main__":
     try:
         run_scan()
-    except Exception as e:
-        send_discord(f"❌ Reddit scan failed: {e}")
+    except Exception as ex:
+        send_discord_notification(f"🔥 Clickyleaks Reddit failed: `{str(ex)}`")
         raise
