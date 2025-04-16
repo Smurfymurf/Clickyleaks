@@ -1,16 +1,15 @@
-name: Clickyleaks YouTube8M Scanner
+name: Clickyleaks Random YouTube
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 * * * *'  # every hour
   workflow_dispatch:
 
 jobs:
-  run-script:
+  scan:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -20,9 +19,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests python-dotenv supabase
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv supabase pandas
 
-      - name: Run Clickyleaks YouTube8M Scanner
+      - name: Run Random YouTube Scan
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
