@@ -1,6 +1,7 @@
 import csv
 import requests
 import time
+import re
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client
