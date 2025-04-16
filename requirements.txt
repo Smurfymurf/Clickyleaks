@@ -2,3 +2,6 @@ google-api-python-client
 python-whois
 requests
 supabase
+python-dotenv
+
+
