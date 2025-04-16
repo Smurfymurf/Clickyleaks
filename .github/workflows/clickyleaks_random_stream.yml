@@ -1,16 +1,16 @@
-name: Clickyleaks Random YouTube Mirror
+name: Clickyleaks Random YouTube
 
 on:
   schedule:
-    - cron: '0 * * * *'  # every hour
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
-  run-random-scan:
+  scan:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -22,7 +22,7 @@ jobs:
         run: |
           pip install requests python-dotenv supabase dnspython pytz
 
-      - name: Run Random Scanner (YouTube-8M Mirror)
+      - name: Run Random Scanner
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
