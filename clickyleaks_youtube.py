@@ -1,17 +1,36 @@
-import requests, time, random, re
+import requests, time, random, re, os
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from supabase import create_client, Client
-import os
 
 # === CONFIG ===
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# === DISCORD ALERT ===
+def send_discord_alert(domain, video):
+    if not DISCORD_WEBHOOK_URL:
+        return
+    msg = f"""
+🔥 **Available Domain Found!**
+
+🔗 Domain: `{domain}`
+🎬 Video: [{video['video_title']}]({video['video_url']})
+👁️ Views: {video['view_count']}
+📅 Discovered: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
+"""
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
+    except Exception as e:
+        print(f"❌ Failed to send Discord alert: {e}")
+
+# === KEYWORDS ===
 KEYWORDS = [
+    # Affiliate, Health, Finance, Hyper-Niche etc...
     "best crypto wallets for beginners", "affiliate landing page examples", "how to make money from home 2024",
     "passive income with AI", "weight loss affiliate programs", "best ai tools for content creation",
     "cheapest domain hosting", "2023 clickbank tutorial", "earn bitcoin free", "cheap website builder reviews",
@@ -27,7 +46,32 @@ KEYWORDS = [
     "affiliate tiktok page", "how to promote affiliate links on Reddit", "high traffic expired domains",
     "best AI content tools", "make money on autopilot", "drop servicing 2024", "no face youtube channel ideas",
     "best niches for affiliate", "seo for affiliate marketers", "chatgpt affiliate prompts",
-    "get free leads fast", "money making hacks online", "turn blog into cashflow"
+    "get free leads fast", "money making hacks online", "turn blog into cashflow",
+    
+    # 🚨 NEW: Health & Beauty
+    "top fat burners for women", "natural weight loss hacks", "hair growth supplements 2024",
+    "best skincare routines for acne", "anti-aging serums reviews", "best collagen powder on amazon",
+    "top supplements for energy", "dermatologist approved face wash", "hair loss shampoo for men",
+    "vegan protein powder reviews", "best eye creams for dark circles", "cheap organic skincare routines",
+    "skin tightening devices for home", "non-surgical wrinkle treatments", "best teeth whitening kits amazon",
+    "essential oils for hair growth", "biotin vs collagen", "top keto snacks 2024",
+
+    # 💰 NEW: Finance & Insurance
+    "best credit cards 2024", "top cashback apps", "open a high interest savings account",
+    "student loan refinance options", "crypto tax software reviews", "best stock trading apps",
+    "life insurance for beginners", "car insurance comparison 2024", "top no fee bank accounts",
+    "cheap health insurance hacks", "best cash advance apps", "how to boost your credit score fast",
+    "no annual fee credit card offers", "personal loan affiliate programs", "compare home insurance rates",
+    "best budgeting apps", "get paid early with direct deposit", "top fintech apps for 2024",
+
+    # 🎯 Hyper-Niche Long Tails
+    "tools for creating digital planners", "sell courses using notion", "best email warmup services",
+    "make $5 a day from reddit", "gpt prompts for side hustles", "how to monetize low traffic blog",
+    "seo audit tools free", "build newsletter empire with beehiiv", "top chrome extensions for bloggers",
+    "sell notion templates online", "make money reskinning apps", "how to flip digital assets",
+    "best ai voice generators 2024", "affiliate programs that accept beginners", "ai prompt marketplace ideas",
+    "free tools for growing substack", "instagram reel monetization 2024", "how to build ai tools without code"
+    
 ]
 
 BLOCKED_DOMAINS = [
@@ -37,8 +81,7 @@ BLOCKED_DOMAINS = [
 ]
 
 def get_random_published_before():
-    # 5 years = 1825 days
-    days_ago = random.randint(10, 1825)
+    days_ago = random.randint(10, 1825)  # Up to 5 years ago
     date = datetime.utcnow() - timedelta(days=days_ago)
     return date.isoformat("T") + "Z"
 
@@ -83,11 +126,14 @@ def get_video_details(video_id):
     items = res.json().get("items", [])
     if items:
         item = items[0]
+        views = int(item["statistics"].get("viewCount", 0))
+        if views < 10000:
+            return None
         return {
             "title": item["snippet"]["title"],
             "description": item["snippet"]["description"],
             "url": f"https://www.youtube.com/watch?v={video_id}",
-            "view_count": int(item["statistics"].get("viewCount", 0))
+            "view_count": views
         }
     return None
 
@@ -99,10 +145,6 @@ def is_domain_available(domain):
     if root.startswith("www."):
         root = root[4:]
     root = root.split("/")[0]
-
-    headers = {
-        "Accept": "application/json"
-    }
 
     try:
         res = requests.get(f"http://{root}", timeout=5)
@@ -143,6 +185,8 @@ def check_click_leak(link, video_meta, video_id):
 
     try:
         supabase.table("Clickyleaks").insert(record).execute()
+        if is_available:
+            send_discord_alert(domain, video_meta)
     except Exception as e:
         print(f"⚠️ Skipped duplicate video_id insert: {e}")
 
@@ -165,11 +209,6 @@ def main():
 
         details = get_video_details(video_id)
         if not details:
-            continue
-
-        # Skip videos under 10k views
-        if details["view_count"] < 10000:
-            print(f"⚠️ Skipping low-view video ({details['view_count']} views)")
             continue
 
         links = extract_links(details["description"])
