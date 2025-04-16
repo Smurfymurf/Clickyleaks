@@ -1,32 +1,31 @@
-name: Recheck Available Domains
+name: Double Check Available Domains
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
-  workflow_dispatch:
+    - cron: "*/30 * * * *"  # Every 30 minutes
+  workflow_dispatch:        # Manual trigger
 
 jobs:
-  recheck-available-domains:
+  recheck-available:
     runs-on: ubuntu-latest
 
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.10  # ✅ Corrected from 3.1
+          python-version: '3.10'  # ✅ Correct and safe version
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install dnspython
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv supabase dns
 
-      - name: Run recheck script
-        run: python recheck_available_domains.py
+      - name: Recheck available domains
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python recheck_available.py
