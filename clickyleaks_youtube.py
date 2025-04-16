@@ -1,13 +1,13 @@
-import requests, time, random, re
+import requests, time, random, re, os
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from supabase import create_client, Client
-import os
 
 # === CONFIG ===
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -35,6 +35,8 @@ BLOCKED_DOMAINS = [
     "rumble.com", "facebook.com", "twitter.com", "linkedin.com", "paypal.com",
     "discord.gg", "youtu.be"
 ]
+
+found_domains = []
 
 def get_random_published_before():
     days_ago = random.randint(10, 3650)
@@ -99,10 +101,6 @@ def is_domain_available(domain):
         root = root[4:]
     root = root.split("/")[0]
 
-    headers = {
-        "Accept": "application/json"
-    }
-
     try:
         res = requests.get(f"http://{root}", timeout=5)
         return False
@@ -127,6 +125,9 @@ def check_click_leak(link, video_meta, video_id):
 
     print(f"🔍 Logging: {domain} (Available: {is_available})")
 
+    if is_available:
+        found_domains.append(f"{domain} ({video_meta['view_count']} views)\n{video_meta['url']}")
+
     record = {
         "domain": domain,
         "full_url": link,
@@ -144,6 +145,20 @@ def check_click_leak(link, video_meta, video_id):
         supabase.table("Clickyleaks").insert(record).execute()
     except Exception as e:
         print(f"⚠️ Skipped duplicate video_id insert: {e}")
+
+def send_discord_alert():
+    if not found_domains:
+        return
+
+    message = "**🔥 Clickyleaks YouTube Found Available Domains!**\n\n" + "\n\n".join(found_domains)
+    payload = {
+        "content": message
+    }
+    try:
+        response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        print(f"✅ Discord alert sent: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Failed to send Discord alert: {e}")
 
 def main():
     print("🚀 Clickyleaks scan started...")
@@ -173,6 +188,7 @@ def main():
 
         time.sleep(1)
 
+    send_discord_alert()
     print("✅ Scan complete.")
 
 if __name__ == "__main__":
