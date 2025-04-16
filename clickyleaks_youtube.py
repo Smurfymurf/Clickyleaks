@@ -11,26 +11,8 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === DISCORD ALERT ===
-def send_discord_alert(domain, video):
-    if not DISCORD_WEBHOOK_URL:
-        return
-    msg = f"""
-🔥 **Available Domain Found!**
-
-🔗 Domain: `{domain}`
-🎬 Video: [{video['video_title']}]({video['video_url']})
-👁️ Views: {video['view_count']}
-📅 Discovered: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
-"""
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
-    except Exception as e:
-        print(f"❌ Failed to send Discord alert: {e}")
-
-# === KEYWORDS ===
+# Expanded niche keyword list
 KEYWORDS = [
-    # Affiliate, Health, Finance, Hyper-Niche etc...
     "best crypto wallets for beginners", "affiliate landing page examples", "how to make money from home 2024",
     "passive income with AI", "weight loss affiliate programs", "best ai tools for content creation",
     "cheapest domain hosting", "2023 clickbank tutorial", "earn bitcoin free", "cheap website builder reviews",
@@ -44,34 +26,23 @@ KEYWORDS = [
     "how to start an affiliate blog", "best ad networks for bloggers", "top weight loss offers 2024",
     "free course hosting platform", "ai tools for dropshipping", "buying backlinks tutorial",
     "affiliate tiktok page", "how to promote affiliate links on Reddit", "high traffic expired domains",
-    "best AI content tools", "make money on autopilot", "drop servicing 2024", "no face youtube channel ideas",
-    "best niches for affiliate", "seo for affiliate marketers", "chatgpt affiliate prompts",
-    "get free leads fast", "money making hacks online", "turn blog into cashflow",
-    
-    # 🚨 NEW: Health & Beauty
-    "top fat burners for women", "natural weight loss hacks", "hair growth supplements 2024",
-    "best skincare routines for acne", "anti-aging serums reviews", "best collagen powder on amazon",
-    "top supplements for energy", "dermatologist approved face wash", "hair loss shampoo for men",
-    "vegan protein powder reviews", "best eye creams for dark circles", "cheap organic skincare routines",
-    "skin tightening devices for home", "non-surgical wrinkle treatments", "best teeth whitening kits amazon",
-    "essential oils for hair growth", "biotin vs collagen", "top keto snacks 2024",
-
-    # 💰 NEW: Finance & Insurance
-    "best credit cards 2024", "top cashback apps", "open a high interest savings account",
-    "student loan refinance options", "crypto tax software reviews", "best stock trading apps",
-    "life insurance for beginners", "car insurance comparison 2024", "top no fee bank accounts",
-    "cheap health insurance hacks", "best cash advance apps", "how to boost your credit score fast",
-    "no annual fee credit card offers", "personal loan affiliate programs", "compare home insurance rates",
-    "best budgeting apps", "get paid early with direct deposit", "top fintech apps for 2024",
-
-    # 🎯 Hyper-Niche Long Tails
-    "tools for creating digital planners", "sell courses using notion", "best email warmup services",
-    "make $5 a day from reddit", "gpt prompts for side hustles", "how to monetize low traffic blog",
-    "seo audit tools free", "build newsletter empire with beehiiv", "top chrome extensions for bloggers",
-    "sell notion templates online", "make money reskinning apps", "how to flip digital assets",
-    "best ai voice generators 2024", "affiliate programs that accept beginners", "ai prompt marketplace ideas",
-    "free tools for growing substack", "instagram reel monetization 2024", "how to build ai tools without code"
-    
+    "make money on autopilot", "drop servicing 2024", "no face youtube channel ideas",
+    "seo for affiliate marketers", "chatgpt affiliate prompts", "get free leads fast",
+    "turn blog into cashflow", "best chrome extensions for bloggers", "best paid survey sites",
+    "2024 insurance hacks", "best dental insurance plans", "cheap car insurance online",
+    "how to refinance credit card debt", "best health supplements for men", "natural skincare products 2024",
+    "anti-aging affiliate offers", "top rated nootropics", "best protein powders for weight loss",
+    "how to get out of debt fast", "budgeting apps review", "credit repair for beginners",
+    "life insurance affiliate programs", "top tax saving strategies", "best apps for investing",
+    "top 10 gadgets for remote workers", "tools for freelancers", "cashback apps compared",
+    "free hosting deals", "best VPNs for streaming", "fitness tech under $50", "most profitable side hustles",
+    "AI tools for writing", "website audit tools", "learn to code for free", "best hair growth supplements",
+    "acne skincare reviews", "top digital courses to promote", "insurance lead generation guide",
+    "financial affiliate blog ideas", "affiliate seo tutorial", "best web hosting for bloggers",
+    "web design toolkits", "launch a Shopify store", "AI email writer", "top Fiverr gigs",
+    "AI voiceover tools", "side hustle with zero investment", "webinars to make money",
+    "best freelancing sites 2024", "legal templates for bloggers", "top 10 webinar tools",
+    "how to become a virtual assistant", "finance YouTube automation ideas", "beauty blog affiliate content"
 ]
 
 BLOCKED_DOMAINS = [
@@ -81,7 +52,8 @@ BLOCKED_DOMAINS = [
 ]
 
 def get_random_published_before():
-    days_ago = random.randint(10, 1825)  # Up to 5 years ago
+    # Random video from 100 to 1825 days ago (approx 5 years)
+    days_ago = random.randint(100, 1825)
     date = datetime.utcnow() - timedelta(days=days_ago)
     return date.isoformat("T") + "Z"
 
@@ -108,7 +80,6 @@ def search_youtube(query, max_pages=10):
         data = res.json()
         items = data.get("items", [])
         videos.extend(items)
-
         page_token = data.get("nextPageToken")
         if not page_token:
             break
@@ -126,14 +97,11 @@ def get_video_details(video_id):
     items = res.json().get("items", [])
     if items:
         item = items[0]
-        views = int(item["statistics"].get("viewCount", 0))
-        if views < 10000:
-            return None
         return {
             "title": item["snippet"]["title"],
             "description": item["snippet"]["description"],
             "url": f"https://www.youtube.com/watch?v={video_id}",
-            "view_count": views
+            "view_count": int(item["statistics"].get("viewCount", 0))
         }
     return None
 
@@ -147,7 +115,7 @@ def is_domain_available(domain):
     root = root.split("/")[0]
 
     try:
-        res = requests.get(f"http://{root}", timeout=5)
+        requests.get(f"http://{root}", timeout=5)
         return False
     except:
         return True
@@ -155,6 +123,16 @@ def is_domain_available(domain):
 def already_scanned(video_id):
     result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
     return len(result.data) > 0
+
+def send_discord_alert(domain, video_meta):
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    content = f"🔥 **New Available Domain Found!**\n\n🔗 Domain: `{domain}`\n🎥 Video: [{video_meta['title']}]({video_meta['url']})\n👁️ Views: {video_meta['view_count']}"
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10)
+    except Exception as e:
+        print(f"⚠️ Discord alert failed: {e}")
 
 def check_click_leak(link, video_meta, video_id):
     domain = urlparse(link).netloc.lower()
@@ -192,12 +170,18 @@ def check_click_leak(link, video_meta, video_id):
 
 def main():
     print("🚀 Clickyleaks scan started...")
-    keyword = random.choice(KEYWORDS)
-    print(f"🔎 Searching: {keyword}")
-    results = search_youtube(keyword)
+
+    results = []
+    attempts = 0
+
+    while attempts < 3 and not results:
+        keyword = random.choice(KEYWORDS)
+        print(f"🔎 Searching: {keyword}")
+        results = search_youtube(keyword)
+        attempts += 1
 
     if not results:
-        print("No results found.")
+        print("❌ No results found after 3 attempts.")
         return
 
     random.shuffle(results)
@@ -208,7 +192,7 @@ def main():
             continue
 
         details = get_video_details(video_id)
-        if not details:
+        if not details or details["view_count"] < 10000:
             continue
 
         links = extract_links(details["description"])
