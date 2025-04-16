@@ -1,5 +1,6 @@
 import os
-import requests
+import whois
+import time
 from datetime import datetime
 from supabase import create_client, Client
 
@@ -8,43 +9,47 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === Availability Check ===
-def is_domain_available(domain):
+def is_domain_registered(domain):
     try:
-        import socket
-        socket.setdefaulttimeout(5)
-        socket.gethostbyname(domain)
-        return False  # If it resolves, it's taken
-    except socket.gaierror:
-        return True
+        w = whois.whois(domain)
+        return bool(w.domain_name)
+    except:
+        return False
 
-# === Re-check and Update ===
-def reverify_domains():
-    print("🔁 Re-verifying available domains...")
-    
-    rows = (
-        supabase.table("Clickyleaks")
-        .select("id, domain")
-        .eq("is_available", True)
-        .execute()
-    )
+def recheck_domains():
+    print("🔎 Starting premium recheck...")
 
-    for row in rows.data:
-        domain = row['domain']
-        domain_id = row['id']
-        print(f"🔍 Re-checking: {domain}")
+    # Fetch all domains previously marked as available
+    response = supabase.table("Clickyleaks").select("*").eq("is_available", True).execute()
+    domains = response.data
 
-        available = is_domain_available(domain)
+    if not domains:
+        print("✅ No available domains found to recheck.")
+        return
 
-        supabase.table("Clickyleaks").update({
-            "is_available": available,
-            "scanned_at": datetime.utcnow().isoformat()
-        }).eq("id", domain_id).execute()
+    print(f"🔁 Rechecking {len(domains)} domains...")
 
-        if not available:
-            print(f"❌ No longer available: {domain}")
+    for entry in domains:
+        domain = entry["domain"]
+        domain_id = entry["id"]
+
+        print(f"🔍 Rechecking domain: {domain}")
+
+        if is_domain_registered(domain):
+            print(f"❌ Domain is actually taken: {domain}")
+            supabase.table("Clickyleaks").update({
+                "is_available": False,
+                "scanned_at": datetime.utcnow().isoformat()
+            }).eq("id", domain_id).execute()
         else:
             print(f"✅ Still available: {domain}")
+            supabase.table("Clickyleaks").update({
+                "scanned_at": datetime.utcnow().isoformat()
+            }).eq("id", domain_id).execute()
+
+        time.sleep(1.5)  # avoid hammering WHOIS
+
+    print("🎉 Premium recheck complete.")
 
 if __name__ == "__main__":
-    reverify_domains()
+    recheck_domains()
