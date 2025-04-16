@@ -1,50 +1,32 @@
-import os
-import requests
-from datetime import datetime
-from supabase import create_client, Client
+name: Recheck Available Domains
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+on:
+  schedule:
+    - cron: '0 * * * *'  # every hour
+  workflow_dispatch:
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+jobs:
+  recheck-available-domains:
+    runs-on: ubuntu-latest
 
-# === Availability Check ===
-def is_domain_available(domain):
-    try:
-        import socket
-        socket.setdefaulttimeout(5)
-        socket.gethostbyname(domain)
-        return False  # If it resolves, it's taken
-    except socket.gaierror:
-        return True
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
-# === Re-check and Update ===
-def reverify_domains():
-    print("🔁 Re-verifying available domains...")
-    
-    rows = (
-        supabase.table("Clickyleaks")
-        .select("id, domain")
-        .eq("is_available", True)
-        .execute()
-    )
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-    for row in rows.data:
-        domain = row['domain']
-        domain_id = row['id']
-        print(f"🔍 Re-checking: {domain}")
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'  # ✅ This must be 3.10 (not 3.1)
 
-        available = is_domain_available(domain)
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install dnspython
 
-        supabase.table("Clickyleaks").update({
-            "is_available": available,
-            "scanned_at": datetime.utcnow().isoformat()
-        }).eq("id", domain_id).execute()
-
-        if not available:
-            print(f"❌ No longer available: {domain}")
-        else:
-            print(f"✅ Still available: {domain}")
-
-if __name__ == "__main__":
-    reverify_domains()
+      - name: Run recheck script
+        run: python recheck_available_domains.py
