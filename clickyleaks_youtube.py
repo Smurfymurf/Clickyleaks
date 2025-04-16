@@ -11,38 +11,27 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Expanded niche keyword list
 KEYWORDS = [
+    # Existing + expanded list
     "best crypto wallets for beginners", "affiliate landing page examples", "how to make money from home 2024",
     "passive income with AI", "weight loss affiliate programs", "best ai tools for content creation",
     "cheapest domain hosting", "2023 clickbank tutorial", "earn bitcoin free", "cheap website builder reviews",
     "fat burner amazon review", "affiliate link cloaking tutorial", "how to create a sales funnel",
     "ai money making methods", "keto diet affiliate", "buy expired domains tutorial",
     "best hosting for affiliate websites", "get paid to write articles", "ai to make money online",
-    "how to use chatgpt for side income", "top clickbank products 2024", "high commission affiliate offers",
-    "best landing page builders 2024", "youtube automation money", "email marketing for beginners",
-    "free crypto airdrops", "make $100/day with AI", "easy affiliate programs to join",
-    "viral giveaway tool", "print on demand affiliate tips", "fastest way to grow email list",
-    "how to start an affiliate blog", "best ad networks for bloggers", "top weight loss offers 2024",
-    "free course hosting platform", "ai tools for dropshipping", "buying backlinks tutorial",
-    "affiliate tiktok page", "how to promote affiliate links on Reddit", "high traffic expired domains",
-    "make money on autopilot", "drop servicing 2024", "no face youtube channel ideas",
-    "seo for affiliate marketers", "chatgpt affiliate prompts", "get free leads fast",
-    "turn blog into cashflow", "best chrome extensions for bloggers", "best paid survey sites",
-    "2024 insurance hacks", "best dental insurance plans", "cheap car insurance online",
-    "how to refinance credit card debt", "best health supplements for men", "natural skincare products 2024",
-    "anti-aging affiliate offers", "top rated nootropics", "best protein powders for weight loss",
-    "how to get out of debt fast", "budgeting apps review", "credit repair for beginners",
-    "life insurance affiliate programs", "top tax saving strategies", "best apps for investing",
-    "top 10 gadgets for remote workers", "tools for freelancers", "cashback apps compared",
-    "free hosting deals", "best VPNs for streaming", "fitness tech under $50", "most profitable side hustles",
-    "AI tools for writing", "website audit tools", "learn to code for free", "best hair growth supplements",
-    "acne skincare reviews", "top digital courses to promote", "insurance lead generation guide",
-    "financial affiliate blog ideas", "affiliate seo tutorial", "best web hosting for bloggers",
-    "web design toolkits", "launch a Shopify store", "AI email writer", "top Fiverr gigs",
-    "AI voiceover tools", "side hustle with zero investment", "webinars to make money",
-    "best freelancing sites 2024", "legal templates for bloggers", "top 10 webinar tools",
-    "how to become a virtual assistant", "finance YouTube automation ideas", "beauty blog affiliate content"
+    "top clickbank products 2024", "email marketing for beginners", "make $100/day with AI",
+    "viral giveaway tool", "easy affiliate programs to join", "best niches for affiliate",
+    "best ai content tools", "chatgpt affiliate prompts", "money making hacks online",
+    "top weight loss products", "how to promote affiliate links on Reddit", "high traffic expired domains",
+    "insurance affiliate programs", "best health supplements 2024", "anti aging skincare review",
+    "best protein powders for weight loss", "credit card comparison site", "life insurance explained",
+    "ultimate guide to dropshipping", "how to find cheap car insurance", "top 10 finance books",
+    "best personal loan platforms", "top AI stocks to watch", "best passive income websites",
+    "top 10 collagen supplements", "nootropics ranking", "top budgeting apps", "best hair regrowth oils",
+    "acne skincare routines", "get free travel insurance", "best vitamins for women", "affiliate websites making money",
+    "AI tools for productivity", "how to flip domains for profit", "how to get paid surveys",
+    "best SaaS affiliate programs", "crypto airdrop strategies", "make money with chatbots",
+    "clickfunnels review 2024", "lead generation strategies", "best marketing courses for beginners"
 ]
 
 BLOCKED_DOMAINS = [
@@ -52,8 +41,7 @@ BLOCKED_DOMAINS = [
 ]
 
 def get_random_published_before():
-    # Random video from 100 to 1825 days ago (approx 5 years)
-    days_ago = random.randint(100, 1825)
+    days_ago = random.randint(10, 1825)  # Max 5 years
     date = datetime.utcnow() - timedelta(days=days_ago)
     return date.isoformat("T") + "Z"
 
@@ -97,11 +85,14 @@ def get_video_details(video_id):
     items = res.json().get("items", [])
     if items:
         item = items[0]
+        view_count = int(item["statistics"].get("viewCount", 0))
+        if view_count < 10000:
+            return None
         return {
             "title": item["snippet"]["title"],
             "description": item["snippet"]["description"],
             "url": f"https://www.youtube.com/watch?v={video_id}",
-            "view_count": int(item["statistics"].get("viewCount", 0))
+            "view_count": view_count
         }
     return None
 
@@ -124,16 +115,6 @@ def already_scanned(video_id):
     result = supabase.table("Clickyleaks").select("id").eq("video_id", video_id).execute()
     return len(result.data) > 0
 
-def send_discord_alert(domain, video_meta):
-    if not DISCORD_WEBHOOK_URL:
-        return
-
-    content = f"🔥 **New Available Domain Found!**\n\n🔗 Domain: `{domain}`\n🎥 Video: [{video_meta['title']}]({video_meta['url']})\n👁️ Views: {video_meta['view_count']}"
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10)
-    except Exception as e:
-        print(f"⚠️ Discord alert failed: {e}")
-
 def check_click_leak(link, video_meta, video_id):
     domain = urlparse(link).netloc.lower()
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
@@ -145,7 +126,6 @@ def check_click_leak(link, video_meta, video_id):
         status = 0
 
     is_available = is_domain_available(domain)
-
     print(f"🔍 Logging: {domain} (Available: {is_available})")
 
     record = {
@@ -161,27 +141,28 @@ def check_click_leak(link, video_meta, video_id):
         "scanned_at": datetime.utcnow().isoformat()
     }
 
-    try:
-        supabase.table("Clickyleaks").insert(record).execute()
-        if is_available:
-            send_discord_alert(domain, video_meta)
-    except Exception as e:
-        print(f"⚠️ Skipped duplicate video_id insert: {e}")
+    supabase.table("Clickyleaks").insert(record).execute()
+
+    if is_available and DISCORD_WEBHOOK_URL:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": f"🔥 **Available domain found!**\n🔗 `{domain}`\n🎥 {video_meta['title']}"})
 
 def main():
     print("🚀 Clickyleaks scan started...")
 
+    MAX_RETRIES = 3
     results = []
-    attempts = 0
+    attempt = 0
 
-    while attempts < 3 and not results:
+    while not results and attempt < MAX_RETRIES:
         keyword = random.choice(KEYWORDS)
-        print(f"🔎 Searching: {keyword}")
+        print(f"🔎 Attempt {attempt + 1}: Searching for '{keyword}'")
         results = search_youtube(keyword)
-        attempts += 1
+        attempt += 1
 
     if not results:
-        print("❌ No results found after 3 attempts.")
+        print("No results found after retries.")
+        if DISCORD_WEBHOOK_URL:
+            requests.post(DISCORD_WEBHOOK_URL, json={"content": "⚠️ Clickyleaks YouTube ran but found *no results* after 3 keyword retries."})
         return
 
     random.shuffle(results)
@@ -192,7 +173,7 @@ def main():
             continue
 
         details = get_video_details(video_id)
-        if not details or details["view_count"] < 10000:
+        if not details:
             continue
 
         links = extract_links(details["description"])
