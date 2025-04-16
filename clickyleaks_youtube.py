@@ -3,21 +3,22 @@ import re
 import uuid
 import socket
 import dns.resolver
+import random
 from datetime import datetime
 from pytz import UTC
 from supabase import create_client, Client
 from googleapiclient.discovery import build
 
-# Environment variables
+# Env vars
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-# Initialize Supabase and YouTube
+# Initialize clients
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# Affiliate-style keywords
+# Keywords
 KEYWORDS = [
     "make money online", "affiliate marketing", "drop shipping", "crypto wallet",
     "work from home", "online business", "earn passive income", "ai tools",
@@ -28,13 +29,11 @@ KEYWORDS = [
     "graphic design tools", "freelancing guide"
 ]
 
-# Extract domains from text
 def extract_domains(text):
     if not text:
         return []
     return re.findall(r'https?://(?:www\.)?([^\s/]+)', text)
 
-# Check if domain is available
 def is_domain_available(domain):
     try:
         socket.gethostbyname(domain)
@@ -48,29 +47,30 @@ def is_domain_available(domain):
     except:
         return True
 
-# Check if video_id has been scanned before
 def already_checked(video_id):
     response = supabase.table("Clickyleaks").select("video_id").eq("video_id", video_id).execute()
     return len(response.data) > 0
 
-# Insert domain + video metadata
 def insert_domain(domain, video, available):
+    video_id = video["id"]
+    video_title = video["snippet"]["title"]
+    view_count = int(video.get("statistics", {}).get("viewCount", 0))
+
     supabase.table("Clickyleaks").insert({
         "id": str(uuid.uuid4()),
         "domain": domain,
-        "video_title": video["snippet"]["title"],
-        "video_url": f"https://www.youtube.com/watch?v={video['id']['videoId']}",
-        "view_count": int(video.get("statistics", {}).get("viewCount", 0)),
+        "video_title": video_title,
+        "video_url": f"https://www.youtube.com/watch?v={video_id}",
+        "view_count": view_count,
         "available": available,
         "is_checked": True,
-        "video_id": video["id"]["videoId"],
+        "video_id": video_id,
         "created_at": datetime.now(UTC).isoformat()
     }).execute()
 
-# Search and log domains
 def search_and_log():
     print("🚀 Clickyleaks scan started...")
-    query = random_keyword()
+    query = random.choice(KEYWORDS)
     print(f"🔎 Searching: {query}")
 
     search_response = youtube.search().list(
@@ -99,11 +99,6 @@ def search_and_log():
             available = is_domain_available(domain)
             print(f"{'🟢' if available else '🔴'} Logging domain: {domain}")
             insert_domain(domain, video, available)
-
-# Random keyword
-def random_keyword():
-    import random
-    return random.choice(KEYWORDS)
 
 if __name__ == "__main__":
     search_and_log()
