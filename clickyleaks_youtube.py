@@ -122,14 +122,14 @@ def check_click_leak(link, video_meta, video_id):
     if any(domain.endswith(bad) for bad in BLOCKED_DOMAINS):
         return
 
+    is_available = is_domain_available(domain)
+
     try:
         status = requests.head(link, timeout=5, allow_redirects=True).status_code
     except:
         status = 0
 
-    is_available = is_domain_available(domain)
-
-    print(f"🔍 Logging: {domain} (Available: {is_available})")
+    print(f"{'🟢' if is_available else '🔴'} Logging domain: {domain}")
 
     record = {
         "domain": domain,
@@ -147,7 +147,7 @@ def check_click_leak(link, video_meta, video_id):
     try:
         supabase.table("Clickyleaks").insert(record).execute()
     except Exception as e:
-        print(f"⚠️ Skipped duplicate video_id insert: {e}")
+        print(f"⚠️ Skipping duplicate video_id insert: {e}")
 
 def main():
     print("🚀 Clickyleaks scan started...")
@@ -173,7 +173,7 @@ def main():
         links = extract_links(details["description"])
         for link in links:
             check_click_leak(link, details, video_id)
-            break
+            break  # optional: just check 1 link per video
 
         time.sleep(1)
 
