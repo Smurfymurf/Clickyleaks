@@ -2,7 +2,7 @@ name: Clickyleaks YouTube Scraper
 
 on:
   schedule:
-    - cron: '*/20 * * * *'  # Runs every 20 minutes
+    - cron: '*/20 * * * *'  # Every 20 minutes
   workflow_dispatch:
 
 jobs:
@@ -18,14 +18,23 @@ jobs:
       with:
         python-version: '3.10'
 
+    - name: Debug - Show files
+      run: |
+        pwd
+        ls -la
+
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt || true
-        pip install dnspython pytz
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        fi
+        pip install dnspython pytz supabase pycountry
 
-    - name: Run scraper
+    - name: Run Clickyleaks script
       env:
         YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      run: python clickyleaks_youtube.py
+      run: |
+        echo "Launching Clickyleaks YouTube..."
+        python clickyleaks_youtube.py
