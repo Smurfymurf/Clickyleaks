@@ -27,7 +27,7 @@ def get_next_chunk_number():
     return f"{number:03d}"
 
 def download_chunk(chunk_num):
-    url = f"https://www.dropbox.com/scl/fi/1ppkjjh5obz5a1intm2l3/chunk_{chunk_num}.json?rlkey=6tpw4o2jt5q2hf42m3l1lsuv8&raw=1"
+    url = f"https://dl.dropboxusercontent.com/scl/fi/1ppkjjh5obz5a1intm2l3/chunk_{chunk_num}.json?rlkey=6tpw4o2jt5q2hf42m3l1lsuv8"
     print(f"📥 Downloading chunk: {url}")
     try:
         res = requests.get(url, timeout=30)
