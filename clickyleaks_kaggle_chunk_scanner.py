@@ -1,4 +1,4 @@
-import requests, json, time, re
+import requests, re, json, time
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
@@ -8,32 +8,37 @@ import os
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-CHUNK_BASE_URL = "https://smurfymurf.github.io/clickyleaks-chunks/chunk_{:03}.json"
+BASE_CHUNK_URL = "https://smurfymurf.github.io/clickyleaks-chunks"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+BLOCKED_DOMAINS = ["facebook.com", "youtu.be", "youtube.com", "twitter.com", "instagram.com", "t.co", "bit.ly", "on.fb.me", "itunes.apple.com"]
 
 def get_next_chunk_index():
     checked = supabase.table("Clickyleaks_KaggleCheckedChunks").select("chunk_name").execute()
-    used_chunks = {row["chunk_name"] for row in checked.data}
+    scanned = set(row["chunk_name"] for row in checked.data)
     for i in range(1, 1000):
         name = f"chunk_{i:03}.json"
-        if name not in used_chunks:
+        if name not in scanned:
             return i, name
     return None, None
 
-def download_chunk(index):
-    url = CHUNK_BASE_URL.format(index)
-    print(f"📥 Downloading chunk: {url}")
+def mark_chunk_complete(chunk_name):
+    supabase.table("Clickyleaks_KaggleCheckedChunks").insert({
+        "chunk_name": chunk_name,
+        "scanned_at": datetime.utcnow().isoformat()
+    }).execute()
+
+def mark_video_checked(video_id):
     try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        return response.json()
+        supabase.table("Clickyleaks_KaggleChecked").insert({
+            "video_id": video_id,
+            "checked_at": datetime.utcnow().isoformat()
+        }).execute()
     except Exception as e:
-        print(f"❌ Failed to download or parse chunk: {e}")
-        return None
+        print(f"⚠️ Failed to log checked video {video_id}: {e}")
 
 def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text or "")
+    return re.findall(r'(https?://[^\s)]+)', text)
 
 def is_domain_available(domain):
     root = domain.lower().strip()
@@ -41,77 +46,84 @@ def is_domain_available(domain):
         root = root[4:]
     root = root.split("/")[0]
     try:
-        res = requests.get(f"http://{root}", timeout=4)
+        res = requests.get(f"http://{root}", timeout=5)
         return False
     except:
         return True
 
-def send_discord_alert(domain, video_id, video_title, video_url):
-    message = {
-        "content": f"🚨 **Available domain found!**\n**Domain:** `{domain}`\n**Video:** [{video_title}]({video_url})"
-    }
-    try:
-        requests.post(DISCORD_WEBHOOK_URL, json=message, timeout=5)
-    except Exception as e:
-        print(f"❌ Discord webhook failed: {e}")
+def log_available_domain(domain, video, link):
+    print(f"🔍 Logging domain: {domain} | Available: True")
+    supabase.table("Clickyleaks").insert({
+        "domain": domain,
+        "full_url": link,
+        "video_id": video["_id"],
+        "video_title": video.get("title", "N/A"),
+        "video_url": f"https://www.youtube.com/watch?v={video['_id']}",
+        "http_status": 0,
+        "is_available": True,
+        "view_count": 0,
+        "discovered_at": datetime.utcnow().isoformat(),
+        "scanned_at": datetime.utcnow().isoformat()
+    }).execute()
 
-def process_video(video):
-    video_id = video.get("_id")
-    description = video.get("description", "")
-    title = video.get("title", "No Title")
-    if not video_id:
+def send_discord_alert(domains):
+    if not DISCORD_WEBHOOK_URL:
         return
-
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
-    links = extract_links(description)
-    for link in links:
-        domain = urlparse(link).netloc.lower()
-        if any(bad in domain for bad in ["youtube.com", "youtu.be", "bit.ly", "t.co", "linktr.ee"]):
-            continue
-
-        is_available = is_domain_available(domain)
-        print(f"🔍 Logging domain: {domain} | Available: {is_available}")
-        if is_available:
-            record = {
-                "domain": domain,
-                "full_url": link,
-                "video_id": video_id,
-                "video_title": title,
-                "video_url": video_url,
-                "http_status": 0,
-                "is_available": True,
-                "view_count": 0,
-                "discovered_at": datetime.utcnow().isoformat(),
-                "scanned_at": datetime.utcnow().isoformat()
-            }
-            supabase.table("Clickyleaks").insert(record).execute()
-            send_discord_alert(domain, video_id, title, video_url)
-        break  # Only check first link
+    lines = [f"🔔 **{len(domains)} Available Domain(s) Found!**"]
+    for d in domains:
+        lines.append(f"🔗 `{d['domain']}` from [Video]({d['video_url']})")
+    message = "\n".join(lines)
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+    except Exception as e:
+        print(f"⚠️ Discord alert failed: {e}")
 
 def main():
     print("🚀 Clickyleaks Kaggle Chunk Scanner Started...")
     index, chunk_name = get_next_chunk_index()
-    if not index:
-        print("✅ All chunks processed.")
+    if not chunk_name:
+        print("✅ No unscanned chunks left.")
         return
 
-    data = download_chunk(index)
-    if not data:
-        print("❌ No new chunk processed.")
+    url = f"{BASE_CHUNK_URL}/{chunk_name}"
+    print(f"📥 Downloading chunk: {url}")
+    try:
+        res = requests.get(url, timeout=30)
+        data = json.loads(res.text)
+    except Exception as e:
+        print(f"❌ Failed to download or parse chunk: {e}")
         return
 
-    count = 0
+    found_domains = []
+
     for video in data:
-        if count >= 100:
-            break
-        process_video(video)
-        count += 1
-        time.sleep(0.5)
+        video_id = video.get("_id")
+        if not video_id or not video.get("description"):
+            continue
+        links = extract_links(video["description"])
+        if not links:
+            mark_video_checked(video_id)
+            continue
+        for link in links:
+            domain = urlparse(link).netloc.lower()
+            if any(bad in domain for bad in BLOCKED_DOMAINS):
+                continue
+            available = is_domain_available(domain)
+            if available:
+                log_available_domain(domain, video, link)
+                found_domains.append({
+                    "domain": domain,
+                    "video_url": f"https://www.youtube.com/watch?v={video_id}"
+                })
+            break  # Check only first link per video
+        mark_video_checked(video_id)
+        time.sleep(1)
 
-    supabase.table("Clickyleaks_KaggleCheckedChunks").insert({
-        "chunk_name": chunk_name,
-        "checked_at": datetime.utcnow().isoformat()
-    }).execute()
+    mark_chunk_complete(chunk_name)
+
+    if found_domains:
+        send_discord_alert(found_domains)
+
     print(f"✅ Finished scanning chunk: {chunk_name}")
 
 if __name__ == "__main__":
