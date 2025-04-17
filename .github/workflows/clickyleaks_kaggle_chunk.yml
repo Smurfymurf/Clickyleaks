@@ -2,30 +2,31 @@ name: Clickyleaks Kaggle Chunk Scanner
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Runs every hour
+    - cron: '*/20 * * * *'  # Every 20 minutes
   workflow_dispatch:
 
 jobs:
-  scan:
+  run-scanner:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: Install dependencies
-      run: |
-        pip install requests python-dotenv supabase dnspython pytz
+      - name: Install dependencies
+        run: |
+          pip install requests python-dotenv supabase dnspython
 
-    - name: Run Kaggle Chunk Scanner
-      env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      run: |
-        python clickyleaks_kaggle_chunk_scanner.py
+      - name: Run Kaggle Chunk Scanner
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          echo "🚀 Running Clickyleaks Kaggle Chunk Scanner..."
+          python clickyleaks_kaggle_chunk_scanner.py
