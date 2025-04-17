@@ -1,87 +1,83 @@
-import os
 import requests
+import os
+from datetime import datetime
 from supabase import create_client, Client
 from urllib.parse import urlparse
-from datetime import datetime
 
+# === ENV CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+GODADDY_KEY = os.getenv("GODADDY_API_KEY")
+GODADDY_SECRET = os.getenv("GODADDY_API_SECRET")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def is_domain_available(domain):
-    root = domain.lower().strip()
-    if root.startswith("www."):
-        root = root[4:]
-    root = root.split("/")[0]
+HEADERS_GODADDY = {
+    "Authorization": f"sso-key {GODADDY_KEY}:{GODADDY_SECRET}",
+    "Accept": "application/json"
+}
+
+def is_video_live(video_id):
+    url = "https://www.googleapis.com/youtube/v3/videos"
+    params = {
+        "part": "status",
+        "id": video_id,
+        "key": YOUTUBE_API_KEY
+    }
+    res = requests.get(url, params=params, timeout=10)
+    items = res.json().get("items", [])
+    return bool(items)
+
+def is_domain_available_godaddy(domain):
+    url = f"https://api.godaddy.com/v1/domains/available?domain={domain}"
     try:
-        requests.get(f"http://{root}", timeout=5)
+        res = requests.get(url, headers=HEADERS_GODADDY, timeout=10)
+        data = res.json()
+        return data.get("available", False)
+    except Exception as e:
+        print(f"⚠️ GoDaddy check failed for {domain}: {e}")
         return False
-    except:
-        return True
 
-def get_youtube_view_count(video_id):
-    try:
-        res = requests.get(f"https://www.youtube.com/watch?v={video_id}", timeout=5)
-        if "Video unavailable" in res.text:
-            return None  # Video doesn't exist
-        match = next((line for line in res.text.splitlines() if 'viewCount' in line), None)
-        if match:
-            import re
-            view_count = re.findall(r'"viewCount":"(\d+)"', match)
-            return int(view_count[0]) if view_count else 0
-        return 0
-    except:
-        return None
-
-def send_discord_alert(domain, video_url):
-    requests.post(DISCORD_WEBHOOK_URL, json={
-        "content": f"🔥 Available domain found: `{domain}`\n🔗 {video_url}"
-    })
+def clean_domain(domain):
+    domain = domain.strip().lower()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    domain = domain.split("/")[0]
+    return domain
 
 def main():
-    print("🚀 Clickyleaks Enrichment Script Started...")
+    print("🚀 Clickyleaks Enrichment Script (GoDaddy + YouTube) Started...")
 
-    result = supabase.table("Clickyleaks") \
-        .select("*") \
-        .or_("verified.is.false,verified.is.null") \
-        .limit(50) \
-        .execute()
+    response = supabase.table("Clickyleaks").select("*").eq("verified", False).limit(100).execute()
+    entries = response.data
 
-    rows = result.data
-    print(f"🔎 Found {len(rows)} unverified rows")
+    if not entries:
+        print("✅ No unverified entries to process.")
+        return
 
-    for row in rows:
-        id = row["id"]
-        domain = row["domain"]
-        video_url = row["video_url"]
-        video_id = row["video_id"]
+    for entry in entries:
+        domain = clean_domain(entry["domain"])
+        video_id = entry["video_id"]
+        row_id = entry["id"]
 
-        print(f"🔍 Checking: {domain} | Video: {video_id}")
+        print(f"🔍 Checking video ID: {video_id} and domain: {domain}")
 
-        view_count = get_youtube_view_count(video_id)
-        if view_count is None:
-            print(f"❌ Video {video_id} no longer exists. Deleting row.")
-            supabase.table("Clickyleaks").delete().eq("id", id).execute()
+        if not is_video_live(video_id):
+            print(f"❌ Video not live: {video_id} — Deleting row.")
+            supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
             continue
 
-        available = is_domain_available(domain)
-        if not available:
-            print(f"❌ Domain {domain} no longer available. Deleting row.")
-            supabase.table("Clickyleaks").delete().eq("id", id).execute()
-            continue
+        is_available = is_domain_available_godaddy(domain)
+        print(f"✅ Video exists | Domain '{domain}' Available: {is_available}")
 
-        print(f"✅ {domain} is still available with {view_count} views.")
         supabase.table("Clickyleaks").update({
-            "view_count": view_count,
+            "is_available": is_available,
             "verified": True,
             "scanned_at": datetime.utcnow().isoformat()
-        }).eq("id", id).execute()
+        }).eq("id", row_id).execute()
 
-        send_discord_alert(domain, video_url)
-
-    print("✅ Enrichment complete.")
+    print("✅ Enrichment pass complete.")
 
 if __name__ == "__main__":
     main()
