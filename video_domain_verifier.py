@@ -1,29 +1,26 @@
 import os
-import requests
+import asyncio
 from datetime import datetime
 from urllib.parse import urlparse
+
 from supabase import create_client, Client
+from playwright.async_api import async_playwright
 
 # === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GODADDY_API_KEY = os.getenv("GODADDY_API_KEY")
 GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET")
-YOUTUBE_VIDEO_URL_TEMPLATE = "https://www.youtube.com/watch?v="
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+YOUTUBE_TEMPLATE = "https://www.youtube.com/watch?v="
 
 HEADERS_GODADDY = {
     "Authorization": f"sso-key {GODADDY_API_KEY}:{GODADDY_API_SECRET}",
     "Accept": "application/json"
 }
 
-def check_video_exists(video_url):
-    try:
-        res = requests.get(video_url, timeout=10)
-        return "video unavailable" not in res.text.lower() and res.status_code == 200
-    except Exception:
-        return False
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 
 def get_domain_root(domain):
     parts = domain.lower().strip().split(".")
@@ -31,7 +28,18 @@ def get_domain_root(domain):
         return ".".join(parts[-2:])
     return domain
 
+
+async def check_video_exists(video_url, page):
+    try:
+        await page.goto(video_url, timeout=15000)
+        content = await page.content()
+        return "video unavailable" not in content.lower()
+    except Exception:
+        return False
+
+
 def check_domain_godaddy(domain):
+    import requests
     try:
         response = requests.get(
             f"https://api.godaddy.com/v1/domains/available?domain={domain}&checkType=FAST&forTransfer=false",
@@ -43,36 +51,35 @@ def check_domain_godaddy(domain):
     except Exception:
         return False
 
-def update_row(row):
+
+async def update_row(row, page):
     domain = get_domain_root(row["domain"])
-    video_id = row["video_id"]
     video_url = row["video_url"]
+    video_id = row["video_id"]
     row_id = row["id"]
 
     print(f"🔍 Checking video: {video_id} | domain: {domain}")
 
-    if not check_video_exists(video_url):
-        print(f"❌ Video {video_id} no longer exists. Deleting row...")
+    # 1. Check video existence via Playwright
+    exists = await check_video_exists(video_url, page)
+    if not exists:
+        print(f"❌ Video {video_id} no longer exists. Removing row...")
         supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
         return
 
+    # 2. Check domain availability
     is_available = check_domain_godaddy(domain)
 
-    view_count = None
-    try:
-        view_count = int(row.get("view_count", 0)) if row.get("view_count") else 0
-    except:
-        view_count = 0
-
-    print(f"✅ Updating record: domain={domain}, available={is_available}, view_count={view_count}")
+    # 3. Update row with status
+    print(f"✅ Updating row: verified={True}, available={is_available}")
     supabase.table("Clickyleaks").update({
-        "is_available": is_available,
         "verified": True,
-        "view_count": view_count
+        "is_available": is_available
     }).eq("id", row_id).execute()
 
-def main():
-    print("🚀 Clickyleaks Enrichment Script Started...")
+
+async def main():
+    print("🚀 Clickyleaks Playwright Verifier Started...")
 
     response = supabase.table("Clickyleaks") \
         .select("*") \
@@ -82,11 +89,18 @@ def main():
 
     rows = response.data
     if not rows:
-        print("✅ No unverified rows found.")
+        print("✅ No unverified entries.")
         return
 
-    for row in rows:
-        update_row(row)
+    async with async_playwright() as pw:
+        browser = await pw.firefox.launch(headless=True)
+        page = await browser.new_page()
+
+        for row in rows:
+            await update_row(row, page)
+
+        await browser.close()
+
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
