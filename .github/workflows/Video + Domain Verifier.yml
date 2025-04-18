@@ -8,8 +8,9 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -19,10 +20,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install requests supabase python-dotenv
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv supabase
 
-      - name: Run Video + Domain Verifier
+      - name: Run verifier script
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
