@@ -51,17 +51,32 @@ def is_domain_available(domain):
 def main():
     print("🚀 Running Clickyleaks Combined Verifier...")
 
-    response = supabase.table("Clickyleaks")\
-        .select("id, domain, video_id")\
+    # Step 1: Check if any unverified rows exist
+    unverified_response = supabase.table("Clickyleaks")\
+        .select("id")\
         .or_("verified.eq.false,verified.is.null")\
-        .limit(1000).execute()
+        .limit(1).execute()
+
+    if unverified_response.data:
+        print("🔍 Checking only unverified entries...")
+        query = supabase.table("Clickyleaks")\
+            .select("id, domain, video_id")\
+            .or_("verified.eq.false,verified.is.null")\
+            .limit(1000)
+    else:
+        print("🧹 No unverified found — scanning ALL entries just to be sure...")
+        query = supabase.table("Clickyleaks")\
+            .select("id, domain, video_id")\
+            .limit(1000)
+
+    response = query.execute()
 
     for row in response.data:
         row_id = row["id"]
         domain = row["domain"]
         video_id = row["video_id"]
 
-        print(f"🔍 Checking YouTube ID: {video_id}")
+        print(f"\n🔍 Checking YouTube ID: {video_id}")
         if not video_exists(video_id):
             print(f"❌ Video does not exist. Deleting row for domain: {domain}")
             supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
