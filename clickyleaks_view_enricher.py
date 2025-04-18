@@ -1,88 +1,86 @@
 import requests
-from supabase import create_client
-from datetime import datetime
-import os
+from supabase import create_client, Client
+import time
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+# Supabase credentials
+SUPABASE_URL = "https://qbjcrvrsrivohcecjbij.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# GoDaddy credentials
+GODADDY_API_KEY = "dL3WQsXW4CjU_Ai76RpB3utPSoxM3fT1gpQ"
+GODADDY_API_SECRET = "63NHtkfJLbnVnjCbMH21Us"
 
-def get_unscanned_rows():
-    return supabase.table("Clickyleaks")\
-        .select("*")\
-        .or_("view_count.is.null,view_count.eq.0")\
-        .limit(100)\
-        .execute().data
-
-def check_video(video_id):
-    url = f"https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id={video_id}&key={YOUTUBE_API_KEY}"
+def video_exists(video_id):
+    url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
     try:
-        res = requests.get(url, timeout=10)
-        res.raise_for_status()
-        data = res.json()
-        if not data["items"]:
-            return None  # video doesn't exist
-        item = data["items"][0]
-        stats = item["statistics"]
-        snippet = item["snippet"]
-        return {
-            "view_count": int(stats.get("viewCount", 0)),
-            "title": snippet.get("title", ""),
-            "url": f"https://www.youtube.com/watch?v={video_id}"
-        }
-    except Exception as e:
-        print(f"⚠️ Error checking video {video_id}: {e}")
-        return "error"
+        r = requests.get(url, timeout=8)
+        return r.status_code == 200
+    except:
+        return False
 
-def send_discord_alert(domain, views, title, video_url):
+def get_youtube_view_count(video_id):
+    info_url = f"https://www.youtube.com/watch?v={video_id}"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
     try:
-        payload = {
-            "content": f"🔍 **New Verified Clickyleak!**\n"
-                       f"**Domain:** `{domain}`\n"
-                       f"**Views:** `{views}`\n"
-                       f"**Video:** [{title}]({video_url})"
-        }
-        res = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
-        if res.status_code == 204:
-            print("📣 Discord alert sent.")
-        else:
-            print(f"⚠️ Discord alert failed: {res.status_code}")
+        r = requests.get(info_url, headers=headers, timeout=10)
+        if "viewCount" in r.text:
+            import re
+            match = re.search(r'"viewCount":"(\d+)"', r.text)
+            return int(match.group(1)) if match else None
+    except:
+        pass
+    return None
+
+def is_domain_available(domain):
+    url = f"https://api.godaddy.com/v1/domains/available?domain={domain}"
+    headers = {
+        "Authorization": f"sso-key {GODADDY_API_KEY}:{GODADDY_API_SECRET}",
+        "Accept": "application/json"
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        return r.json().get("available", False)
     except Exception as e:
-        print(f"❌ Discord error: {e}")
+        print(f"⚠️ Domain check failed: {domain} -> {e}")
+        return False
 
-def enrich():
-    print("🚀 Running View Count Enricher...")
-    rows = get_unscanned_rows()
+def main():
+    print("🚀 Running Clickyleaks Combined Verifier...")
 
-    if not rows:
-        print("✅ No videos to enrich.")
-        return
+    response = supabase.table("Clickyleaks")\
+        .select("id, domain, video_id")\
+        .or_("verified.eq.false,verified.is.null")\
+        .limit(1000).execute()
 
-    for row in rows:
-        video_id = row["video_id"]
+    for row in response.data:
+        row_id = row["id"]
         domain = row["domain"]
-        result = check_video(video_id)
+        video_id = row["video_id"]
 
-        if result == "error":
+        print(f"🔍 Checking YouTube ID: {video_id}")
+        if not video_exists(video_id):
+            print(f"❌ Video does not exist. Deleting row for domain: {domain}")
+            supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
             continue
-        elif result is None:
-            print(f"❌ Video {video_id} not found. Deleting entry.")
-            supabase.table("Clickyleaks").delete().eq("id", row["id"]).execute()
-        else:
-            views = result["view_count"]
-            title = result["title"]
-            url = result["url"]
-            print(f"🔢 Video {video_id} has {views} views. Updating...")
-            supabase.table("Clickyleaks").update({
-                "view_count": views,
-                "scanned_at": datetime.utcnow().isoformat()
-            }).eq("id", row["id"]).execute()
 
-            if views > 0:
-                send_discord_alert(domain, views, title, url)
+        print(f"✅ Video exists. Checking domain: {domain}")
+        available = is_domain_available(domain)
+        if available:
+            view_count = get_youtube_view_count(video_id)
+            supabase.table("Clickyleaks").update({
+                "verified": True,
+                "view_count": view_count
+            }).eq("id", row_id).execute()
+            print(f"✅ Domain available + updated: {domain} | Views: {view_count or '–'}")
+        else:
+            print(f"❌ Domain not available. Removing: {domain}")
+            supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
+
+        time.sleep(1.2)
 
 if __name__ == "__main__":
-    enrich()
+    main()
