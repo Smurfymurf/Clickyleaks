@@ -5,14 +5,13 @@ from urllib.parse import urlparse
 
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
+import requests
 
 # === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GODADDY_API_KEY = os.getenv("GODADDY_API_KEY")
 GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET")
-
-YOUTUBE_TEMPLATE = "https://www.youtube.com/watch?v="
 
 HEADERS_GODADDY = {
     "Authorization": f"sso-key {GODADDY_API_KEY}:{GODADDY_API_SECRET}",
@@ -23,10 +22,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def get_domain_root(domain):
-    parts = domain.lower().strip().split(".")
-    if len(parts) >= 2:
-        return ".".join(parts[-2:])
-    return domain
+    parts = domain.lower().strip().replace("www.", "").split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else domain
 
 
 async def check_video_exists(video_url, page):
@@ -39,7 +36,6 @@ async def check_video_exists(video_url, page):
 
 
 def check_domain_godaddy(domain):
-    import requests
     try:
         response = requests.get(
             f"https://api.godaddy.com/v1/domains/available?domain={domain}&checkType=FAST&forTransfer=false",
@@ -55,35 +51,38 @@ def check_domain_godaddy(domain):
 async def update_row(row, page):
     domain = get_domain_root(row["domain"])
     video_url = row["video_url"]
-    video_id = row["video_id"]
+    video_id = row.get("video_id", "unknown")
     row_id = row["id"]
 
     print(f"🔍 Checking video: {video_id} | domain: {domain}")
 
-    # 1. Check video existence via Playwright
+    # 1. Check video still exists
     exists = await check_video_exists(video_url, page)
     if not exists:
-        print(f"❌ Video {video_id} no longer exists. Removing row...")
+        print(f"❌ Video {video_id} no longer exists. Deleting row...")
         supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
         return
 
     # 2. Check domain availability
     is_available = check_domain_godaddy(domain)
 
-    # 3. Update row with status
-    print(f"✅ Updating row: verified={True}, available={is_available}")
+    # 3. Update verification status
+    print(f"✅ Updating row: verified=True, is_available={is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
-        "is_available": is_available
+        "is_available": is_available,
+        "verified_at": datetime.utcnow().isoformat()
     }).eq("id", row_id).execute()
 
 
 async def main():
-    print("🚀 Clickyleaks Playwright Verifier Started...")
+    print("🚀 Clickyleaks Verifier Started...")
 
+    # Get the oldest unverified domains
     response = supabase.table("Clickyleaks") \
         .select("*") \
         .or_("verified.is.false,verified.is.null") \
+        .order("discovered_at", desc=False) \
         .limit(20) \
         .execute()
 
