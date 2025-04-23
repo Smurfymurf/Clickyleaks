@@ -1,7 +1,7 @@
 import os
 import asyncio
-from datetime import datetime
 from urllib.parse import urlparse
+from datetime import datetime
 
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
@@ -66,11 +66,11 @@ async def update_row(row, page):
     # 2. Check domain availability
     is_available = check_domain_godaddy(domain)
 
-    # 3. Update verification status
+    # 3. Update status
     print(f"✅ Updating row: verified=True, is_available={is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
-        "is_available": is_available,
+        "is_available": is_available
     }).eq("id", row_id).execute()
 
 
