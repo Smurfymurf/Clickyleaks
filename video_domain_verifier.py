@@ -71,7 +71,6 @@ async def update_row(row, page):
     supabase.table("Clickyleaks").update({
         "verified": True,
         "is_available": is_available,
-        "verified_at": datetime.utcnow().isoformat()
     }).eq("id", row_id).execute()
 
 
