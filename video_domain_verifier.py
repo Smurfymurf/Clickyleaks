@@ -1,7 +1,6 @@
 import os
 import asyncio
 from urllib.parse import urlparse
-from datetime import datetime
 
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
@@ -66,19 +65,18 @@ async def update_row(row, page):
     # 2. Check domain availability
     is_available = check_domain_godaddy(domain)
 
-    # 3. Update status
+    # 3. Update status (without verified_at)
     print(f"✅ Updating row: verified=True, is_available={is_available}")
-supabase.table("Clickyleaks").update({
-    "verified": True,
-    "is_available": is_available
-}).eq("id", row_id).execute()
-
+    supabase.table("Clickyleaks").update({
+        "verified": True,
+        "is_available": is_available
+    }).eq("id", row_id).execute()
 
 
 async def main():
     print("🚀 Clickyleaks Verifier Started...")
 
-    # Get the oldest unverified domains
+    # Pull the oldest 20 unverified domains
     response = supabase.table("Clickyleaks") \
         .select("*") \
         .or_("verified.is.false,verified.is.null") \
@@ -102,4 +100,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    print("🚀 Running Video + Domain Verifier...")
     asyncio.run(main())
