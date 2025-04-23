@@ -68,10 +68,11 @@ async def update_row(row, page):
 
     # 3. Update status
     print(f"✅ Updating row: verified=True, is_available={is_available}")
-    supabase.table("Clickyleaks").update({
-        "verified": True,
-        "is_available": is_available
-    }).eq("id", row_id).execute()
+supabase.table("Clickyleaks").update({
+    "verified": True,
+    "is_available": is_available
+}).eq("id", row_id).execute()
+
 
 
 async def main():
