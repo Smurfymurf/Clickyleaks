@@ -99,41 +99,49 @@ def fetch_video_data_from_api(video_id):
     except:
         return None, 0
 
-async def process_row(row, page, tab_num):
+async def try_goto(page, url, retries=2):
+    for attempt in range(retries + 1):
+        try:
+            await asyncio.sleep(random.uniform(1.0, 3.0))  # random human delay
+            await page.goto(url, timeout=20000, wait_until="domcontentloaded")
+            await page.evaluate("window.scrollBy(0, 300);")
+            await page.wait_for_timeout(2000)
+            return True
+        except Exception as e:
+            print(f"⚠️ Attempt {attempt + 1} failed: {e}")
+            await asyncio.sleep(1.5 + attempt)
+    return False
+
+async def process_row(row, page):
     domain = row["domain"]
     root_domain = normalize_domain(domain)
     video_url = row["video_url"]
     video_id = extract_video_id(row.get("video_id") or video_url)
     row_id = row["id"]
 
-    print(f"🔍 [Tab {tab_num}] Checking video: {video_id} | domain: {root_domain}")
+    print(f"🔍 Checking video: {video_id} | domain: {root_domain}")
 
     if root_domain in WELL_KNOWN_DOMAINS:
-        print(f"🚫 [Tab {tab_num}] Skipping {root_domain} (well-known)")
+        print(f"🚫 Skipping {root_domain} (well-known)")
         supabase.table("Clickyleaks").update({
             "verified": True,
             "is_available": False
         }).eq("id", row_id).execute()
         return
 
-    # Load page with Playwright (with scroll + wait patch)
-    try:
-        await page.goto(video_url, timeout=20000)
-        await page.evaluate("window.scrollBy(0, 300);")
-        await page.wait_for_timeout(2000)
-        content = await page.content()
-        if "video unavailable" in content.lower():
-            print(f"❌ [Tab {tab_num}] Video not found – deleting row")
-            supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
-            return
-    except Exception as e:
-        print(f"❌ [Tab {tab_num}] Could not load video: {e}")
+    success = await try_goto(page, video_url)
+    if not success:
+        print(f"❌ Could not load video after retries")
         return
 
-    # Try YouTube API
+    content = await page.content()
+    if "video unavailable" in content.lower():
+        print(f"❌ Video not found – deleting row")
+        supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
+        return
+
     video_title, view_count = fetch_video_data_from_api(video_id)
 
-    # Fallback to scraping
     if not video_title or view_count == 0:
         try:
             video_title = await page.title()
@@ -141,27 +149,23 @@ async def process_row(row, page, tab_num):
             video_title = "Unknown"
         try:
             view_count = await page.evaluate('''() => {
-                const viewEl = document.querySelector('#count .view-count');
-                if (viewEl) return parseInt(viewEl.textContent.replace(/[^\\d]/g, '')) || 0;
+                const el = document.querySelector('#count .view-count');
+                if (el) return parseInt(el.textContent.replace(/[^\\d]/g, '')) || 0;
 
-                const spans = [...document.querySelectorAll('span')];
-                for (const span of spans) {
-                    if (/\\d+ views/.test(span.textContent)) {
-                        return parseInt(span.textContent.replace(/[^\\d]/g, '')) || 0;
-                    }
-                }
-
-                return 0;
+                const alt = [...document.querySelectorAll('span')]
+                    .map(el => el.textContent)
+                    .find(text => /\\d+ views/.test(text));
+                return alt ? parseInt(alt.replace(/[^\\d]/g, '')) : 0;
             }''')
         except:
             view_count = 0
 
     is_available = check_domain_domainr(root_domain)
     if is_available is None:
-        print(f"⚠️ [Tab {tab_num}] Domain check failed for {root_domain}")
+        print(f"⚠️ Domain check failed for {root_domain}")
         return
 
-    print(f"✅ [Tab {tab_num}] Updating row → title: {video_title} | views: {view_count} | available: {is_available}")
+    print(f"✅ Updating row → title: {video_title} | views: {view_count} | available: {is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
         "is_available": is_available,
@@ -172,7 +176,7 @@ async def process_row(row, page, tab_num):
     await asyncio.sleep(random.uniform(1.0, 2.0))
 
 async def main():
-    print("🚀 Clickyleaks Verifier (Playwright + Domainr) Starting...")
+    print("🚀 Clickyleaks Verifier (Single Tab / Low Profile) Starting...")
 
     response = supabase.table("Clickyleaks") \
         .select("*") \
@@ -188,21 +192,14 @@ async def main():
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
-        context1 = await browser.new_context(user_agent=random.choice(USER_AGENTS))
-        context2 = await browser.new_context(user_agent=random.choice(USER_AGENTS))
+        context = await browser.new_context(user_agent=random.choice(USER_AGENTS))
+        page = await context.new_page()
 
-        page1 = await context1.new_page()
-        page2 = await context2.new_page()
+        for row in rows:
+            await process_row(row, page)
 
-        tasks = []
-        for i, row in enumerate(rows):
-            page = page1 if i % 2 == 0 else page2
-            tab = 1 if i % 2 == 0 else 2
-            tasks.append(process_row(row, page, tab))
-
-        await asyncio.gather(*tasks)
         await browser.close()
 
 if __name__ == "__main__":
-    print("🚀 Running Video + Domain Verifier (Final Scraper Version)")
+    print("🚀 Running Video + Domain Verifier (Stealth Mode)")
     asyncio.run(main())
