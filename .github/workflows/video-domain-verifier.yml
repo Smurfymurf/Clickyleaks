@@ -1,16 +1,16 @@
-name: Video + Domain Verifier
+name: Run Clickyleaks Verifier
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'  # Runs every 10 minutes
   workflow_dispatch:
+  schedule:
+    - cron: '0 * * * *'  # Runs every hour
 
 jobs:
   verify:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -20,14 +20,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install playwright supabase requests
+          pip install tldextract playwright supabase
+          playwright install
 
-      - name: Install Playwright Browsers
-        run: |
-          python -m playwright install --with-deps
-
-      - name: Run Video + Domain Verifier
+      - name: Run Clickyleaks Verifier
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
