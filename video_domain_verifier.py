@@ -1,6 +1,7 @@
 import os
 import asyncio
 import random
+import requests
 from urllib.parse import urlparse
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
@@ -8,6 +9,7 @@ import time
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")  # RapidAPI key for Domainr
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -36,6 +38,20 @@ def get_domain_root(domain):
     parts = domain.lower().strip().replace("www.", "").split(".")
     return ".".join(parts[-2:]) if len(parts) >= 2 else domain
 
+def check_domain_domainr(domain):
+    try:
+        url = f"https://domainr.p.rapidapi.com/v2/status?domain={domain}"
+        headers = {
+            "X-RapidAPI-Key": DOMAINR_API_KEY,
+            "X-RapidAPI-Host": "domainr.p.rapidapi.com"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        status = response.json()["status"][0]["status"]
+        return "inactive" in status or "undelegated" in status
+    except Exception as e:
+        print(f"❌ Domainr check failed for {domain}: {e}")
+        return None
+
 async def check_video_exists(video_url, page):
     try:
         await page.goto(video_url, timeout=15000)
@@ -43,22 +59,6 @@ async def check_video_exists(video_url, page):
         return "video unavailable" not in content.lower()
     except Exception:
         return False
-
-async def check_domain_via_browser(domain, page, retries=2):
-    url = f"https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck={domain}"
-    for attempt in range(retries):
-        try:
-            await page.goto(url, timeout=25000)
-            await page.wait_for_timeout(5000)
-            content = await page.content()
-            if "is taken" in content.lower() or "not available" in content.lower():
-                return False
-            elif "is available" in content.lower() or "add to cart" in content.lower():
-                return True
-        except Exception as e:
-            print(f"⚠️ Retry {attempt + 1}/{retries} failed for {domain}: {str(e)}")
-            await asyncio.sleep(3)
-    return None
 
 async def process_row(row, page, index):
     await asyncio.sleep(index * 2)
@@ -84,10 +84,10 @@ async def process_row(row, page, index):
         supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
         return
 
-    is_available = await check_domain_via_browser(root_domain, page)
+    is_available = check_domain_domainr(root_domain)
 
     if is_available is None:
-        print(f"⚠️ [Tab {index}] Skipping {domain} due to failed domain availability check.")
+        print(f"⚠️ [Tab {index}] Skipping {domain} due to failed Domainr check.")
         return
 
     print(f"✅ [Tab {index}] Updating row: verified=True, is_available={is_available}")
@@ -99,7 +99,7 @@ async def process_row(row, page, index):
     await asyncio.sleep(5)
 
 async def main():
-    print("🚀 Clickyleaks Stealth Verifier Started...")
+    print("🚀 Clickyleaks Domainr Verifier Started...")
 
     response = supabase.table("Clickyleaks") \
         .select("*") \
@@ -130,5 +130,5 @@ async def main():
         await browser.close()
 
 if __name__ == "__main__":
-    print("🚀 Running Stealth Video + Domain Verifier...")
+    print("🚀 Running Domainr-Based Video + Domain Verifier...")
     asyncio.run(main())
