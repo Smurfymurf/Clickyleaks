@@ -1,3 +1,6 @@
+# Rewriting the full verifier script after kernel reset
+
+script_content = """
 import os
 import asyncio
 import random
@@ -7,11 +10,9 @@ from urllib.parse import urlparse, parse_qs
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
 
-# === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -63,50 +64,23 @@ def check_domain_domainr(domain: str, retries=2) -> bool:
         try:
             res = requests.get(url, headers=headers, timeout=10)
             data = res.json()
-            if "message" in data:
-                msg = data["message"].lower()
-                if "invalid api key" in msg:
-                    print("❌ Invalid Domainr API key.")
-                    return None
-                if "too many requests" in msg:
-                    wait = 10 + attempt * 5
-                    print(f"⚠️ Rate limited – sleeping {wait}s...")
-                    time.sleep(wait)
-                    continue
             if "status" in data and data["status"]:
                 status = data["status"][0]["status"]
                 return "inactive" in status or "undelegated" in status
-            print(f"❌ Unexpected Domainr response: {data}")
             return None
         except Exception as e:
             print(f"❌ Domainr error: {e}")
             time.sleep(5)
-    return None
 
-def fetch_video_data_from_api(video_id):
-    url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id={video_id}&key={YOUTUBE_API_KEY}"
-    try:
-        res = requests.get(url)
-        data = res.json()
-        items = data.get("items", [])
-        if not items:
-            return None, 0
-        snippet = items[0]["snippet"]
-        stats = items[0].get("statistics", {})
-        title = snippet.get("title", "Unknown")
-        views = int(stats.get("viewCount", 0))
-        return title, views
-    except:
-        return None, 0
+    return None
 
 async def process_row(row, page, tab_num):
     domain = row["domain"]
     root_domain = normalize_domain(domain)
     video_url = row["video_url"]
-    video_id = extract_video_id(row.get("video_id") or video_url)
     row_id = row["id"]
 
-    print(f"🔍 [Tab {tab_num}] Checking video: {video_id} | domain: {root_domain}")
+    print(f"🔍 [Tab {tab_num}] Checking video: {row.get('video_id')} | domain: {root_domain}")
 
     if root_domain in WELL_KNOWN_DOMAINS:
         print(f"🚫 [Tab {tab_num}] Skipping {root_domain} (well-known)")
@@ -117,33 +91,27 @@ async def process_row(row, page, tab_num):
         return
 
     try:
-        await page.goto(video_url, timeout=20000)
-        content = await page.content()
-        if "video unavailable" in content.lower():
-            print(f"❌ [Tab {tab_num}] Video not found – deleting row")
-            supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
+        await page.goto(video_url, timeout=20000, wait_until="domcontentloaded")
+    except:
+        await asyncio.sleep(2)
+        try:
+            await page.goto(video_url, timeout=20000, wait_until="domcontentloaded")
+        except Exception as e:
+            print(f"❌ [Tab {tab_num}] Could not load video after retry: {e}")
             return
-    except Exception as e:
-        print(f"❌ [Tab {tab_num}] Could not load video: {e}")
-        return
 
-    # First try YouTube API
-    video_title, view_count = fetch_video_data_from_api(video_id)
+    try:
+        title_el = await page.wait_for_selector("h1.title, div#title h1", timeout=15000)
+        video_title = await title_el.inner_text()
+    except:
+        video_title = "Unknown"
 
-    # Fallback to scraping
-    if not video_title or view_count == 0:
-        try:
-            video_title = await page.evaluate("() => document.title")
-        except:
-            video_title = "Unknown"
-        try:
-            view_count = await page.evaluate('''() => {
-                const el = document.querySelector('#count span.view-count');
-                if (!el) return 0;
-                return parseInt(el.textContent.replace(/[^\\d]/g, '')) || 0;
-            }''')
-        except:
-            view_count = 0
+    try:
+        view_el = await page.wait_for_selector("span.view-count", timeout=15000)
+        view_text = await view_el.inner_text()
+        view_count = int(''.join(filter(str.isdigit, view_text)))
+    except:
+        view_count = 0
 
     is_available = check_domain_domainr(root_domain)
     if is_available is None:
@@ -179,7 +147,6 @@ async def main():
         browser = await pw.chromium.launch(headless=True)
         context1 = await browser.new_context(user_agent=random.choice(USER_AGENTS))
         context2 = await browser.new_context(user_agent=random.choice(USER_AGENTS))
-
         page1 = await context1.new_page()
         page2 = await context2.new_page()
 
@@ -195,3 +162,9 @@ async def main():
 if __name__ == "__main__":
     print("🚀 Running Video + Domain Verifier (Final Scraper Version)")
     asyncio.run(main())
+"""
+
+with open("/mnt/data/video_domain_verifier.py", "w") as f:
+    f.write(script_content)
+
+"/mnt/data/video_domain_verifier.py"
