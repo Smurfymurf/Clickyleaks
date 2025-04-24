@@ -116,8 +116,11 @@ async def process_row(row, page, tab_num):
         }).eq("id", row_id).execute()
         return
 
+    # Load page with Playwright (with scroll + wait patch)
     try:
         await page.goto(video_url, timeout=20000)
+        await page.evaluate("window.scrollBy(0, 300);")
+        await page.wait_for_timeout(2000)
         content = await page.content()
         if "video unavailable" in content.lower():
             print(f"❌ [Tab {tab_num}] Video not found – deleting row")
@@ -127,20 +130,28 @@ async def process_row(row, page, tab_num):
         print(f"❌ [Tab {tab_num}] Could not load video: {e}")
         return
 
-    # First try YouTube API
+    # Try YouTube API
     video_title, view_count = fetch_video_data_from_api(video_id)
 
     # Fallback to scraping
     if not video_title or view_count == 0:
         try:
-            video_title = await page.evaluate("() => document.title")
+            video_title = await page.title()
         except:
             video_title = "Unknown"
         try:
             view_count = await page.evaluate('''() => {
-                const el = document.querySelector('#count span.view-count');
-                if (!el) return 0;
-                return parseInt(el.textContent.replace(/[^\\d]/g, '')) || 0;
+                const viewEl = document.querySelector('#count .view-count');
+                if (viewEl) return parseInt(viewEl.textContent.replace(/[^\\d]/g, '')) || 0;
+
+                const spans = [...document.querySelectorAll('span')];
+                for (const span of spans) {
+                    if (/\\d+ views/.test(span.textContent)) {
+                        return parseInt(span.textContent.replace(/[^\\d]/g, '')) || 0;
+                    }
+                }
+
+                return 0;
             }''')
         except:
             view_count = 0
