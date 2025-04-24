@@ -1,11 +1,11 @@
 import os
 import asyncio
+import random
 from urllib.parse import urlparse
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
 import time
 
-# === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -25,11 +25,16 @@ WELL_KNOWN_DOMAINS = {
     "bitbucket.org", "notion.so", "weebly.com", "wix.com", "canva.com"
 }
 
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:118.0) Gecko/20100101 Firefox/118.0",
+]
 
 def get_domain_root(domain):
     parts = domain.lower().strip().replace("www.", "").split(".")
     return ".".join(parts[-2:]) if len(parts) >= 2 else domain
-
 
 async def check_video_exists(video_url, page):
     try:
@@ -39,12 +44,11 @@ async def check_video_exists(video_url, page):
     except Exception:
         return False
 
-
 async def check_domain_via_browser(domain, page, retries=2):
     url = f"https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck={domain}"
     for attempt in range(retries):
         try:
-            await page.goto(url, timeout=20000)
+            await page.goto(url, timeout=25000)
             await page.wait_for_timeout(5000)
             content = await page.content()
             if "is taken" in content.lower() or "not available" in content.lower():
@@ -56,9 +60,8 @@ async def check_domain_via_browser(domain, page, retries=2):
             await asyncio.sleep(3)
     return None
 
-
 async def process_row(row, page, index):
-    await asyncio.sleep(index * 2)  # stagger each tab start slightly
+    await asyncio.sleep(index * 2)
     domain = row["domain"]
     root_domain = get_domain_root(domain)
     video_url = row["video_url"]
@@ -93,9 +96,10 @@ async def process_row(row, page, index):
         "is_available": is_available
     }).eq("id", row_id).execute()
 
+    await asyncio.sleep(5)
 
 async def main():
-    print("🚀 Clickyleaks Optimized Verifier Started...")
+    print("🚀 Clickyleaks Stealth Verifier Started...")
 
     response = supabase.table("Clickyleaks") \
         .select("*") \
@@ -111,8 +115,11 @@ async def main():
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
-        page1 = await browser.new_page()
-        page2 = await browser.new_page()
+        context1 = await browser.new_context(user_agent=random.choice(USER_AGENTS))
+        context2 = await browser.new_context(user_agent=random.choice(USER_AGENTS))
+
+        page1 = await context1.new_page()
+        page2 = await context2.new_page()
 
         tasks = []
         for i, row in enumerate(rows):
@@ -120,10 +127,8 @@ async def main():
             tasks.append(process_row(row, page, i % 2 + 1))
 
         await asyncio.gather(*tasks)
-
         await browser.close()
 
-
 if __name__ == "__main__":
-    print("🚀 Running Optimized Video + Domain Verifier...")
+    print("🚀 Running Stealth Video + Domain Verifier...")
     asyncio.run(main())
