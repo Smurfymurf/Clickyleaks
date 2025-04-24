@@ -1,6 +1,3 @@
-# Rewriting the full verifier script after kernel reset
-
-script_content = """
 import os
 import asyncio
 import random
@@ -10,6 +7,7 @@ from urllib.parse import urlparse, parse_qs
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
 
+# === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")
@@ -64,10 +62,25 @@ def check_domain_domainr(domain: str, retries=2) -> bool:
         try:
             res = requests.get(url, headers=headers, timeout=10)
             data = res.json()
+
+            if "message" in data:
+                msg = data["message"].lower()
+                if "invalid api key" in msg:
+                    print(f"❌ Invalid Domainr API key.")
+                    return None
+                if "too many requests" in msg:
+                    wait = 10 + attempt * 5
+                    print(f"⚠️ Rate limited – sleeping {wait}s...")
+                    time.sleep(wait)
+                    continue
+
             if "status" in data and data["status"]:
                 status = data["status"][0]["status"]
                 return "inactive" in status or "undelegated" in status
+
+            print(f"❌ Unexpected Domainr response: {data}")
             return None
+
         except Exception as e:
             print(f"❌ Domainr error: {e}")
             time.sleep(5)
@@ -78,9 +91,10 @@ async def process_row(row, page, tab_num):
     domain = row["domain"]
     root_domain = normalize_domain(domain)
     video_url = row["video_url"]
+    video_id = extract_video_id(row.get("video_id") or video_url)
     row_id = row["id"]
 
-    print(f"🔍 [Tab {tab_num}] Checking video: {row.get('video_id')} | domain: {root_domain}")
+    print(f"🔍 [Tab {tab_num}] Checking video: {video_id} | domain: {root_domain}")
 
     if root_domain in WELL_KNOWN_DOMAINS:
         print(f"🚫 [Tab {tab_num}] Skipping {root_domain} (well-known)")
@@ -91,24 +105,22 @@ async def process_row(row, page, tab_num):
         return
 
     try:
-        await page.goto(video_url, timeout=20000, wait_until="domcontentloaded")
-    except:
-        await asyncio.sleep(2)
-        try:
-            await page.goto(video_url, timeout=20000, wait_until="domcontentloaded")
-        except Exception as e:
-            print(f"❌ [Tab {tab_num}] Could not load video after retry: {e}")
-            return
+        await page.goto(video_url, timeout=15000)
+        await page.wait_for_selector("h1.title, div#title h1", timeout=7000)
+        await page.wait_for_selector("#view-count span", timeout=7000)
+    except Exception as e:
+        print(f"❌ [Tab {tab_num}] Could not load video: {e}")
+        return
 
+    # Scrape video title
     try:
-        title_el = await page.wait_for_selector("h1.title, div#title h1", timeout=15000)
-        video_title = await title_el.inner_text()
+        title = await page.locator("h1.title, div#title h1").inner_text()
     except:
-        video_title = "Unknown"
+        title = "Unknown"
 
+    # Scrape view count
     try:
-        view_el = await page.wait_for_selector("span.view-count", timeout=15000)
-        view_text = await view_el.inner_text()
+        view_text = await page.locator("#view-count span").inner_text()
         view_count = int(''.join(filter(str.isdigit, view_text)))
     except:
         view_count = 0
@@ -118,11 +130,11 @@ async def process_row(row, page, tab_num):
         print(f"⚠️ [Tab {tab_num}] Domain check failed for {root_domain}")
         return
 
-    print(f"✅ [Tab {tab_num}] Updating row → title: {video_title} | views: {view_count} | available: {is_available}")
+    print(f"✅ [Tab {tab_num}] Updating row → title: {title} | views: {view_count} | available: {is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
         "is_available": is_available,
-        "video_title": video_title,
+        "video_title": title,
         "view_count": view_count
     }).eq("id", row_id).execute()
 
@@ -147,6 +159,7 @@ async def main():
         browser = await pw.chromium.launch(headless=True)
         context1 = await browser.new_context(user_agent=random.choice(USER_AGENTS))
         context2 = await browser.new_context(user_agent=random.choice(USER_AGENTS))
+
         page1 = await context1.new_page()
         page2 = await context2.new_page()
 
@@ -162,9 +175,3 @@ async def main():
 if __name__ == "__main__":
     print("🚀 Running Video + Domain Verifier (Final Scraper Version)")
     asyncio.run(main())
-"""
-
-with open("/mnt/data/video_domain_verifier.py", "w") as f:
-    f.write(script_content)
-
-"/mnt/data/video_domain_verifier.py"
