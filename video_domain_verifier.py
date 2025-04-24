@@ -7,47 +7,59 @@ from supabase import create_client, Client
 from playwright.async_api import async_playwright
 import time
 
+# === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")  # RapidAPI key for Domainr
+DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Well-known domains we skip to save API calls
 WELL_KNOWN_DOMAINS = {
-    "apple.com", "microsoft.com", "google.com", "youtube.com", "amazon.com",
-    "facebook.com", "instagram.com", "twitter.com", "netflix.com", "tiktok.com",
-    "paypal.com", "adobe.com", "dropbox.com", "spotify.com", "whatsapp.com",
-    "bing.com", "linkedin.com", "pinterest.com", "zoom.us", "cnn.com",
-    "bbc.com", "ebay.com", "reddit.com", "airbnb.com", "nytimes.com",
-    "yahoo.com", "icloud.com", "wikipedia.org", "steamcommunity.com", "github.com",
-    "wordpress.com", "tumblr.com", "quora.com", "slack.com", "salesforce.com",
-    "roblox.com", "netlify.app", "vercel.app", "herokuapp.com", "shopify.com",
-    "oracle.com", "atlassian.com", "figma.com", "dribbble.com", "behance.net",
-    "medium.com", "coursera.org", "udemy.com", "khanacademy.org", "stackoverflow.com",
-    "bitbucket.org", "notion.so", "weebly.com", "wix.com", "canva.com"
+    "apple.com", "google.com", "facebook.com", "amazon.com", "youtube.com",
+    "microsoft.com", "netflix.com", "instagram.com", "paypal.com", "reddit.com",
+    "wikipedia.org", "tumblr.com", "github.com", "linkedin.com", "spotify.com",
+    "cnn.com", "bbc.com", "dropbox.com", "airbnb.com", "salesforce.com",
+    "tiktok.com", "ebay.com", "zoom.us", "whatsapp.com", "nytimes.com",
+    "oracle.com", "bing.com", "slack.com", "notion.so", "wordpress.com",
+    "vercel.app", "netlify.app", "figma.com", "medium.com", "shopify.com"
 }
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/118.0",
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:118.0) Gecko/20100101 Firefox/118.0",
 ]
 
-def get_domain_root(domain):
-    parts = domain.lower().strip().replace("www.", "").split(".")
-    return ".".join(parts[-2:]) if len(parts) >= 2 else domain
-
-def check_domain_domainr(domain):
+def normalize_domain(domain: str) -> str:
     try:
-        url = f"https://domainr.p.rapidapi.com/v2/status?domain={domain}"
+        if not domain.startswith("http"):
+            domain = "http://" + domain
+        parsed = urlparse(domain)
+        host = parsed.netloc or parsed.path
+        parts = host.replace("www.", "").split(".")
+        return ".".join(parts[-2:]) if len(parts) >= 2 else host
+    except:
+        return domain
+
+def check_domain_domainr(domain: str) -> bool:
+    root = normalize_domain(domain)
+    try:
+        url = f"https://domainr.p.rapidapi.com/v2/status?domain={root}"
         headers = {
             "X-RapidAPI-Key": DOMAINR_API_KEY,
             "X-RapidAPI-Host": "domainr.p.rapidapi.com"
         }
-        response = requests.get(url, headers=headers, timeout=10)
-        status = response.json()["status"][0]["status"]
-        return "inactive" in status or "undelegated" in status
+        res = requests.get(url, headers=headers, timeout=10)
+        data = res.json()
+
+        if "status" in data and isinstance(data["status"], list) and data["status"]:
+            status = data["status"][0]["status"]
+            return "inactive" in status or "undelegated" in status
+        else:
+            print(f"❌ Invalid Domainr response for {domain}: {data}")
+            return None
     except Exception as e:
         print(f"❌ Domainr check failed for {domain}: {e}")
         return None
@@ -60,46 +72,46 @@ async def check_video_exists(video_url, page):
     except Exception:
         return False
 
-async def process_row(row, page, index):
-    await asyncio.sleep(index * 2)
+async def process_row(row, page, tab_num):
     domain = row["domain"]
-    root_domain = get_domain_root(domain)
+    root_domain = normalize_domain(domain)
     video_url = row["video_url"]
     video_id = row.get("video_id", "unknown")
     row_id = row["id"]
 
-    print(f"🔍 [Tab {index}] Checking video: {video_id} | domain: {root_domain}")
+    print(f"🔍 [Tab {tab_num}] Checking video: {video_id} | domain: {root_domain}")
 
     if root_domain in WELL_KNOWN_DOMAINS:
-        print(f"🚫 Skipping {domain} (well-known root: {root_domain}) and auto-marking as unavailable.")
+        print(f"🚫 [Tab {tab_num}] Skipping {root_domain} (well-known) – marking unavailable")
         supabase.table("Clickyleaks").update({
             "verified": True,
             "is_available": False
         }).eq("id", row_id).execute()
         return
 
+    # Check if video still exists
     exists = await check_video_exists(video_url, page)
     if not exists:
-        print(f"❌ [Tab {index}] Video {video_id} no longer exists. Deleting row...")
+        print(f"❌ [Tab {tab_num}] Video {video_id} not found – deleting row")
         supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
         return
 
+    # Domain availability check
     is_available = check_domain_domainr(root_domain)
 
     if is_available is None:
-        print(f"⚠️ [Tab {index}] Skipping {domain} due to failed Domainr check.")
+        print(f"⚠️ [Tab {tab_num}] Domainr failed for {domain} – skipping")
         return
 
-    print(f"✅ [Tab {index}] Updating row: verified=True, is_available={is_available}")
+    print(f"✅ [Tab {tab_num}] Updating: verified=True, available={is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
         "is_available": is_available
     }).eq("id", row_id).execute()
-
-    await asyncio.sleep(5)
+    await asyncio.sleep(3)
 
 async def main():
-    print("🚀 Clickyleaks Domainr Verifier Started...")
+    print("🚀 Clickyleaks Verifier (Domainr API) Started...")
 
     response = supabase.table("Clickyleaks") \
         .select("*") \
@@ -110,7 +122,7 @@ async def main():
 
     rows = response.data
     if not rows:
-        print("✅ No unverified entries.")
+        print("✅ No unverified entries to check.")
         return
 
     async with async_playwright() as pw:
@@ -124,11 +136,12 @@ async def main():
         tasks = []
         for i, row in enumerate(rows):
             page = page1 if i % 2 == 0 else page2
-            tasks.append(process_row(row, page, i % 2 + 1))
+            tab_num = 1 if i % 2 == 0 else 2
+            tasks.append(process_row(row, page, tab_num))
 
         await asyncio.gather(*tasks)
         await browser.close()
 
 if __name__ == "__main__":
-    print("🚀 Running Domainr-Based Video + Domain Verifier...")
+    print("🚀 Running Video + Domain Verifier with Domainr API")
     asyncio.run(main())
