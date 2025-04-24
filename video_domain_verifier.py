@@ -1,11 +1,11 @@
 import os
 import asyncio
 import random
+import time
 import requests
 from urllib.parse import urlparse
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
-import time
 
 # === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -14,7 +14,6 @@ DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Well-known domains we skip to save API calls
 WELL_KNOWN_DOMAINS = {
     "apple.com", "google.com", "facebook.com", "amazon.com", "youtube.com",
     "microsoft.com", "netflix.com", "instagram.com", "paypal.com", "reddit.com",
@@ -38,31 +37,49 @@ def normalize_domain(domain: str) -> str:
             domain = "http://" + domain
         parsed = urlparse(domain)
         host = parsed.netloc or parsed.path
-        parts = host.replace("www.", "").split(".")
+        host = host.replace("www.", "")
+        parts = host.split(".")
         return ".".join(parts[-2:]) if len(parts) >= 2 else host
     except:
         return domain
 
-def check_domain_domainr(domain: str) -> bool:
+def check_domain_domainr(domain: str, retries=2) -> bool:
     root = normalize_domain(domain)
-    try:
-        url = f"https://domainr.p.rapidapi.com/v2/status?domain={root}"
-        headers = {
-            "X-RapidAPI-Key": DOMAINR_API_KEY,
-            "X-RapidAPI-Host": "domainr.p.rapidapi.com"
-        }
-        res = requests.get(url, headers=headers, timeout=10)
-        data = res.json()
+    url = f"https://domainr.p.rapidapi.com/v2/status?domain={root}"
+    headers = {
+        "X-RapidAPI-Key": DOMAINR_API_KEY,
+        "X-RapidAPI-Host": "domainr.p.rapidapi.com"
+    }
 
-        if "status" in data and isinstance(data["status"], list) and data["status"]:
-            status = data["status"][0]["status"]
-            return "inactive" in status or "undelegated" in status
-        else:
-            print(f"❌ Invalid Domainr response for {domain}: {data}")
+    for attempt in range(retries + 1):
+        try:
+            res = requests.get(url, headers=headers, timeout=10)
+            data = res.json()
+
+            if "message" in data:
+                msg = data["message"].lower()
+                if "invalid api key" in msg:
+                    print(f"❌ Domainr API key is invalid – check your environment setup.")
+                    return None
+                if "too many requests" in msg:
+                    wait = 10 + attempt * 5
+                    print(f"⚠️ Rate limited – sleeping {wait}s and retrying...")
+                    time.sleep(wait)
+                    continue
+
+            if "status" in data and data["status"]:
+                status = data["status"][0]["status"]
+                return "inactive" in status or "undelegated" in status
+
+            print(f"❌ Unexpected Domainr response: {data}")
             return None
-    except Exception as e:
-        print(f"❌ Domainr check failed for {domain}: {e}")
-        return None
+
+        except Exception as e:
+            print(f"❌ Domainr request failed: {e}")
+            time.sleep(5)
+
+    print(f"❌ Final retry failed for {domain}")
+    return None
 
 async def check_video_exists(video_url, page):
     try:
@@ -82,7 +99,7 @@ async def process_row(row, page, tab_num):
     print(f"🔍 [Tab {tab_num}] Checking video: {video_id} | domain: {root_domain}")
 
     if root_domain in WELL_KNOWN_DOMAINS:
-        print(f"🚫 [Tab {tab_num}] Skipping {root_domain} (well-known) – marking unavailable")
+        print(f"🚫 [Tab {tab_num}] Skipping {root_domain} (well-known) – auto-unavailable")
         supabase.table("Clickyleaks").update({
             "verified": True,
             "is_available": False
@@ -92,26 +109,27 @@ async def process_row(row, page, tab_num):
     # Check if video still exists
     exists = await check_video_exists(video_url, page)
     if not exists:
-        print(f"❌ [Tab {tab_num}] Video {video_id} not found – deleting row")
+        print(f"❌ [Tab {tab_num}] Video not found – deleting row")
         supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
         return
 
-    # Domain availability check
+    # Check domain availability
     is_available = check_domain_domainr(root_domain)
 
     if is_available is None:
-        print(f"⚠️ [Tab {tab_num}] Domainr failed for {domain} – skipping")
+        print(f"⚠️ [Tab {tab_num}] Domain check failed for {root_domain}")
         return
 
-    print(f"✅ [Tab {tab_num}] Updating: verified=True, available={is_available}")
+    print(f"✅ [Tab {tab_num}] Updating → verified=True, is_available={is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
         "is_available": is_available
     }).eq("id", row_id).execute()
-    await asyncio.sleep(3)
+
+    await asyncio.sleep(random.uniform(1.0, 2.0))  # Throttle requests
 
 async def main():
-    print("🚀 Clickyleaks Verifier (Domainr API) Started...")
+    print("🚀 Clickyleaks Verifier (Domainr) Starting...")
 
     response = supabase.table("Clickyleaks") \
         .select("*") \
@@ -122,7 +140,7 @@ async def main():
 
     rows = response.data
     if not rows:
-        print("✅ No unverified entries to check.")
+        print("✅ Nothing to verify right now.")
         return
 
     async with async_playwright() as pw:
@@ -136,12 +154,12 @@ async def main():
         tasks = []
         for i, row in enumerate(rows):
             page = page1 if i % 2 == 0 else page2
-            tab_num = 1 if i % 2 == 0 else 2
-            tasks.append(process_row(row, page, tab_num))
+            tab = 1 if i % 2 == 0 else 2
+            tasks.append(process_row(row, page, tab))
 
         await asyncio.gather(*tasks)
         await browser.close()
 
 if __name__ == "__main__":
-    print("🚀 Running Video + Domain Verifier with Domainr API")
+    print("🚀 Running Video + Domain Verifier (Optimized for Domainr)")
     asyncio.run(main())
