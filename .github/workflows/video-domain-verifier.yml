@@ -1,13 +1,19 @@
-name: Run Clickyleaks Verifier
+name: Run Video + Domain Verifier
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'  # Runs every hour
+    - cron: '*/10 * * * *'  # Every 10 minutes
 
 jobs:
-  verify:
+  run-verifier:
     runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      DOMAINR_API_KEY: ${{ secrets.DOMAINR_API_KEY }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
 
     steps:
       - name: Checkout repository
@@ -16,19 +22,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: 3.10
 
       - name: Install dependencies
         run: |
-          pip install tldextract playwright supabase
+          python -m pip install --upgrade pip
+          pip install playwright supabase tldextract
           playwright install
 
-      - name: Run Clickyleaks Verifier
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          DOMAINR_API_KEY: ${{ secrets.DOMAINR_API_KEY }}
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      - name: Run the verifier script
         run: |
           echo "🚀 Running Video + Domain Verifier..."
           python video_domain_verifier.py
