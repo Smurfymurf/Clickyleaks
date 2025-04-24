@@ -1,110 +1,94 @@
 import os
 import asyncio
+from datetime import datetime
 from playwright.async_api import async_playwright
-from supabase import create_client, Client
+from supabase import create_client
 import requests
 
-# Load environment variables
+# Environment variables
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")
 
-# Well-known domains to skip
-WELL_KNOWN_DOMAINS = [
-    "google.com", "facebook.com", "youtube.com", "twitter.com",
-    "instagram.com", "linkedin.com", "wikipedia.org", "tumblr.com",
-    "cnn.com", "ebay.com", "amazon.com"
-]
+# Supabase client
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Initialize Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Full and comprehensive list of domains to ignore
+WELL_KNOWN_DOMAINS = {
+    "google.com", "youtube.com", "facebook.com", "twitter.com", "instagram.com",
+    "linkedin.com", "apple.com", "microsoft.com", "netflix.com", "adobe.com",
+    "tumblr.com", "cnn.com", "bbc.com", "yahoo.com", "reddit.com",
+    "amazon.com", "ebay.com", "paypal.com", "wikipedia.org", "wordpress.com",
+    "pinterest.com", "bing.com", "yandex.ru", "vk.com", "baidu.com",
+    "cloudflare.com", "whatsapp.com", "tiktok.com", "snapchat.com", "dropbox.com"
+}
 
-async def get_video_info(page, video_id):
-    url = f"https://www.youtube.com/watch?v={video_id}"
+async def check_domain(domain):
+    url = f"https://api.domainr.com/v2/status?domain={domain}&client_id={DOMAINR_API_KEY}"
     try:
-        await page.goto(url, timeout=20000)
-
-        try:
-            await page.wait_for_selector("h1.title, div#title h1", timeout=10000)
-            title = await page.locator("h1.title, div#title h1").inner_text()
-        except:
-            print("⚠️ Retrying with alternate title selector...")
-            await page.mouse.wheel(0, 500)
-            await page.wait_for_timeout(2000)
-            try:
-                await page.wait_for_selector("yt-formatted-string.title", timeout=7000)
-                title = await page.locator("yt-formatted-string.title").inner_text()
-            except:
-                title = "Unknown"
-
-        try:
-            await page.wait_for_selector("span.view-count", timeout=7000)
-            views_text = await page.locator("span.view-count").inner_text()
-        except:
-            print("⚠️ Retrying with alternate views selector...")
-            try:
-                await page.wait_for_selector("yt-view-count-renderer span", timeout=5000)
-                views_text = await page.locator("yt-view-count-renderer span").inner_text()
-            except:
-                views_text = "0 views"
-
-        views = int(''.join(filter(str.isdigit, views_text)))
-        return title, views
-    except Exception as e:
-        print(f"❌ Could not load video: {url}\n{e}")
-        return None, None
-
-async def check_domain_available(domain):
-    try:
-        response = requests.get(f"https://api.domainr.com/v2/status?domain={domain}&client_id={DOMAINR_API_KEY}")
+        response = requests.get(url, timeout=10)
         data = response.json()
-        return data['status'][0]['summary'] == 'inactive'
-    except:
+        status = data["status"][0]["status"]
+        return "inactive" in status or "undelegated" in status
+    except Exception as e:
+        print(f"❌ Error checking domain {domain}: {e}")
         return False
+
+async def fetch_video_info(video_id, browser):
+    page = await browser.new_page()
+    try:
+        await page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=10000)
+        title = await page.locator("h1.title, div#title h1").first.inner_text(timeout=7000)
+        views_text = await page.locator("span.view-count").first.inner_text(timeout=5000)
+        view_count = int("".join(filter(str.isdigit, views_text)))
+        await page.close()
+        return title.strip(), view_count
+    except Exception as e:
+        print(f"❌ Error loading video {video_id}: {e}")
+        await page.close()
+        return None, None
 
 async def main():
     print("🚀 Running Video + Domain Verifier (Final Scraper Version)")
     print("🚀 Clickyleaks Verifier (Playwright + Domainr) Starting...")
 
-    entries = supabase.table("clickyleaks_youtube").select("id, video_id, domain").eq("verified", False).limit(50).execute()
+    entries = supabase.table("Clickyleaks").select("id, video_id, domain").eq("verified", False).limit(50).execute()
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
-        page1 = await context.new_page()
-        page2 = await context.new_page()
-
-        tasks = []
         for i, entry in enumerate(entries.data):
-            tab = page1 if i % 2 == 0 else page2
-            video_id = entry['video_id']
-            domain = entry['domain']
-            row_id = entry['id']
+            row_id = entry["id"]
+            video_id = entry["video_id"]
+            domain = entry["domain"].lower()
 
-            if any(d in domain for d in WELL_KNOWN_DOMAINS):
-                print(f"🚫 [Tab {1 if tab == page1 else 2}] Skipping {domain} (well-known)")
-                supabase.table("clickyleaks_youtube").update({"verified": True, "available": False}).eq("id", row_id).execute()
+            print(f"🔍 [Tab {i % 2 + 1}] Checking video: {video_id} | domain: {domain}")
+
+            if domain in WELL_KNOWN_DOMAINS:
+                print(f"🚫 [Tab {i % 2 + 1}] Skipping {domain} (well-known)")
+                supabase.table("Clickyleaks").update({
+                    "verified": True,
+                    "scanned_at": datetime.utcnow().isoformat()
+                }).eq("id", row_id).execute()
                 continue
 
-            print(f"🔍 [Tab {1 if tab == page1 else 2}] Checking video: {video_id} | domain: {domain}")
+            is_available = await check_domain(domain)
+            title, view_count = await fetch_video_info(video_id, browser)
 
-            async def process(tab, video_id, domain, row_id):
-                title, views = await get_video_info(tab, video_id)
-                if title is None:
-                    supabase.table("clickyleaks_youtube").update({"verified": True, "available": False}).eq("id", row_id).execute()
-                    return
-                is_available = await check_domain_available(domain)
-                supabase.table("clickyleaks_youtube").update({
-                    "verified": True,
-                    "available": is_available,
-                    "title": title,
-                    "views": views
-                }).eq("id", row_id).execute()
-                print(f"✅ [Tab {1 if tab == page1 else 2}] Updating row → title: {title} | views: {views} | available: {is_available}")
+            update_data = {
+                "is_available": is_available,
+                "verified": True,
+                "scanned_at": datetime.utcnow().isoformat()
+            }
 
-            tasks.append(process(tab, video_id, domain, row_id))
+            if title:
+                update_data["video_title"] = title
+                update_data["view_count"] = view_count
+                print(f"✅ [Tab {i % 2 + 1}] Updating row → title: {title} | views: {view_count} | available: {is_available}")
+            else:
+                print(f"❌ [Tab {i % 2 + 1}] Could not load video: https://www.youtube.com/watch?v={video_id}")
 
-        await asyncio.gather(*tasks)
+            supabase.table("Clickyleaks").update(update_data).eq("id", row_id).execute()
+
         await browser.close()
 
 if __name__ == "__main__":
