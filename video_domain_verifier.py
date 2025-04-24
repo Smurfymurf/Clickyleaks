@@ -3,7 +3,7 @@ import asyncio
 import random
 import time
 import requests
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
 
@@ -11,7 +11,6 @@ from playwright.async_api import async_playwright
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -44,6 +43,13 @@ def normalize_domain(domain: str) -> str:
     except:
         return domain
 
+def extract_video_id(url_or_id: str) -> str:
+    if "youtube.com/watch" in url_or_id:
+        return parse_qs(urlparse(url_or_id).query).get("v", [""])[0]
+    if "youtu.be/" in url_or_id:
+        return url_or_id.split("/")[-1].split("?")[0]
+    return url_or_id
+
 def check_domain_domainr(domain: str, retries=2) -> bool:
     root = normalize_domain(domain)
     url = f"https://domainr.p.rapidapi.com/v2/status?domain={root}"
@@ -60,11 +66,11 @@ def check_domain_domainr(domain: str, retries=2) -> bool:
             if "message" in data:
                 msg = data["message"].lower()
                 if "invalid api key" in msg:
-                    print(f"❌ Domainr API key is invalid.")
+                    print(f"❌ Invalid Domainr API key.")
                     return None
                 if "too many requests" in msg:
                     wait = 10 + attempt * 5
-                    print(f"⚠️ Domainr throttled — waiting {wait}s...")
+                    print(f"⚠️ Rate limited – sleeping {wait}s...")
                     time.sleep(wait)
                     continue
 
@@ -76,46 +82,16 @@ def check_domain_domainr(domain: str, retries=2) -> bool:
             return None
 
         except Exception as e:
-            print(f"❌ Domainr request failed: {e}")
+            print(f"❌ Domainr error: {e}")
             time.sleep(5)
 
-    print(f"❌ Final retry failed for {domain}")
     return None
-
-def fetch_youtube_metadata(video_id: str, api_key: str):
-    try:
-        url = (
-            f"https://www.googleapis.com/youtube/v3/videos"
-            f"?part=snippet,statistics&id={video_id}&key={api_key}"
-        )
-        response = requests.get(url, timeout=10)
-        data = response.json()
-
-        if "items" in data and len(data["items"]) > 0:
-            item = data["items"][0]
-            title = item["snippet"]["title"]
-            views = int(item["statistics"].get("viewCount", 0))
-            return title, views
-        else:
-            print(f"⚠️ No metadata found for video: {video_id}")
-            return "Unknown", None
-    except Exception as e:
-        print(f"❌ Failed to fetch YouTube metadata for {video_id}: {e}")
-        return "Unknown", None
-
-async def check_video_exists(video_url, page):
-    try:
-        await page.goto(video_url, timeout=15000)
-        content = await page.content()
-        return "video unavailable" not in content.lower()
-    except Exception:
-        return False
 
 async def process_row(row, page, tab_num):
     domain = row["domain"]
     root_domain = normalize_domain(domain)
     video_url = row["video_url"]
-    video_id = row.get("video_id", "unknown")
+    video_id = extract_video_id(row.get("video_id") or video_url)
     row_id = row["id"]
 
     print(f"🔍 [Tab {tab_num}] Checking video: {video_id} | domain: {root_domain}")
@@ -135,18 +111,29 @@ async def process_row(row, page, tab_num):
             print(f"❌ [Tab {tab_num}] Video not found – deleting row")
             supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
             return
-    except Exception:
-        print(f"❌ [Tab {tab_num}] Error loading video – skipping")
+    except Exception as e:
+        print(f"❌ [Tab {tab_num}] Could not load video: {e}")
         return
 
-    video_title, view_count = fetch_youtube_metadata(video_id, YOUTUBE_API_KEY)
-    is_available = check_domain_domainr(root_domain)
+    # Scrape video title
+    try:
+        video_title = await page.title()
+    except:
+        video_title = "Unknown"
 
+    # Scrape view count
+    try:
+        view_text = await page.locator('xpath=//div[@id="count"]/yt-view-count-renderer//span[1]').inner_text()
+        view_count = int(''.join(filter(str.isdigit, view_text)))
+    except:
+        view_count = 0
+
+    is_available = check_domain_domainr(root_domain)
     if is_available is None:
         print(f"⚠️ [Tab {tab_num}] Domain check failed for {root_domain}")
         return
 
-    print(f"✅ [Tab {tab_num}] Updating row → available: {is_available}")
+    print(f"✅ [Tab {tab_num}] Updating row → title: {video_title} | views: {view_count} | available: {is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
         "is_available": is_available,
@@ -157,7 +144,7 @@ async def process_row(row, page, tab_num):
     await asyncio.sleep(random.uniform(1.0, 2.0))
 
 async def main():
-    print("🚀 Clickyleaks Verifier (YouTube + Domainr) Starting...")
+    print("🚀 Clickyleaks Verifier (Playwright + Domainr) Starting...")
 
     response = supabase.table("Clickyleaks") \
         .select("*") \
@@ -189,5 +176,5 @@ async def main():
         await browser.close()
 
 if __name__ == "__main__":
-    print("🚀 Running Video + Domain Verifier (Enhanced with YouTube API)")
+    print("🚀 Running Video + Domain Verifier (Final Scraper Version)")
     asyncio.run(main())
