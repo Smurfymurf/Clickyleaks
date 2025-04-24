@@ -11,6 +11,8 @@ from playwright.async_api import async_playwright
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 WELL_KNOWN_DOMAINS = {
@@ -61,30 +63,41 @@ def check_domain_domainr(domain: str, retries=2) -> bool:
         try:
             res = requests.get(url, headers=headers, timeout=10)
             data = res.json()
-
             if "message" in data:
                 msg = data["message"].lower()
                 if "invalid api key" in msg:
-                    print(f"❌ Invalid Domainr API key.")
+                    print("❌ Invalid Domainr API key.")
                     return None
                 if "too many requests" in msg:
                     wait = 10 + attempt * 5
                     print(f"⚠️ Rate limited – sleeping {wait}s...")
                     time.sleep(wait)
                     continue
-
             if "status" in data and data["status"]:
                 status = data["status"][0]["status"]
                 return "inactive" in status or "undelegated" in status
-
             print(f"❌ Unexpected Domainr response: {data}")
             return None
-
         except Exception as e:
             print(f"❌ Domainr error: {e}")
             time.sleep(5)
-
     return None
+
+def fetch_video_data_from_api(video_id):
+    url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id={video_id}&key={YOUTUBE_API_KEY}"
+    try:
+        res = requests.get(url)
+        data = res.json()
+        items = data.get("items", [])
+        if not items:
+            return None, 0
+        snippet = items[0]["snippet"]
+        stats = items[0].get("statistics", {})
+        title = snippet.get("title", "Unknown")
+        views = int(stats.get("viewCount", 0))
+        return title, views
+    except:
+        return None, 0
 
 async def process_row(row, page, tab_num):
     domain = row["domain"]
@@ -104,36 +117,44 @@ async def process_row(row, page, tab_num):
         return
 
     try:
-        await page.goto(video_url, timeout=15000)
-        await page.wait_for_selector('h1.title, div#title h1', timeout=7000)
+        await page.goto(video_url, timeout=20000)
+        content = await page.content()
+        if "video unavailable" in content.lower():
+            print(f"❌ [Tab {tab_num}] Video not found – deleting row")
+            supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
+            return
     except Exception as e:
         print(f"❌ [Tab {tab_num}] Could not load video: {e}")
         return
 
-    # Scrape video title
-    try:
-        title = await page.locator("h1.title, div#title h1").inner_text()
-    except:
-        title = "Unknown"
+    # First try YouTube API
+    video_title, view_count = fetch_video_data_from_api(video_id)
 
-    # Scrape view count
-    try:
-        view_str = await page.locator('div#view-count span, #info-container #view-count').inner_text()
-        view_count = int(''.join(filter(str.isdigit, view_str)))
-    except:
-        view_count = 0
+    # Fallback to scraping
+    if not video_title or view_count == 0:
+        try:
+            video_title = await page.evaluate("() => document.title")
+        except:
+            video_title = "Unknown"
+        try:
+            view_count = await page.evaluate('''() => {
+                const el = document.querySelector('#count span.view-count');
+                if (!el) return 0;
+                return parseInt(el.textContent.replace(/[^\\d]/g, '')) || 0;
+            }''')
+        except:
+            view_count = 0
 
-    # Domain availability
     is_available = check_domain_domainr(root_domain)
     if is_available is None:
         print(f"⚠️ [Tab {tab_num}] Domain check failed for {root_domain}")
         return
 
-    print(f"✅ [Tab {tab_num}] Updating row → title: {title} | views: {view_count} | available: {is_available}")
+    print(f"✅ [Tab {tab_num}] Updating row → title: {video_title} | views: {view_count} | available: {is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
         "is_available": is_available,
-        "video_title": title,
+        "video_title": video_title,
         "view_count": view_count
     }).eq("id", row_id).execute()
 
