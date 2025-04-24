@@ -40,31 +40,32 @@ async def check_video_exists(video_url, page):
         return False
 
 
-async def check_domain_via_browser(domain, page):
-    try:
-        url = f"https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck={domain}"
-        await page.goto(url, timeout=20000)
-        await page.wait_for_timeout(5000)
-        content = await page.content()
-        if "is taken" in content.lower() or "not available" in content.lower():
-            return False
-        elif "is available" in content.lower() or "add to cart" in content.lower():
-            return True
-        else:
-            return None
-    except Exception as e:
-        print(f"⚠️ Error checking domain via browser: {domain} — {str(e)}")
-        return None
+async def check_domain_via_browser(domain, page, retries=2):
+    url = f"https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck={domain}"
+    for attempt in range(retries):
+        try:
+            await page.goto(url, timeout=20000)
+            await page.wait_for_timeout(5000)
+            content = await page.content()
+            if "is taken" in content.lower() or "not available" in content.lower():
+                return False
+            elif "is available" in content.lower() or "add to cart" in content.lower():
+                return True
+        except Exception as e:
+            print(f"⚠️ Retry {attempt + 1}/{retries} failed for {domain}: {str(e)}")
+            await asyncio.sleep(3)
+    return None
 
 
-async def update_row(row, page):
+async def process_row(row, page, index):
+    await asyncio.sleep(index * 2)  # stagger each tab start slightly
     domain = row["domain"]
     root_domain = get_domain_root(domain)
     video_url = row["video_url"]
     video_id = row.get("video_id", "unknown")
     row_id = row["id"]
 
-    print(f"🔍 Checking video: {video_id} | domain: {root_domain}")
+    print(f"🔍 [Tab {index}] Checking video: {video_id} | domain: {root_domain}")
 
     if root_domain in WELL_KNOWN_DOMAINS:
         print(f"🚫 Skipping {domain} (well-known root: {root_domain}) and auto-marking as unavailable.")
@@ -76,27 +77,25 @@ async def update_row(row, page):
 
     exists = await check_video_exists(video_url, page)
     if not exists:
-        print(f"❌ Video {video_id} no longer exists. Deleting row...")
+        print(f"❌ [Tab {index}] Video {video_id} no longer exists. Deleting row...")
         supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
         return
 
     is_available = await check_domain_via_browser(root_domain, page)
 
     if is_available is None:
-        print(f"⚠️ Skipping {domain} due to failed domain availability check.")
+        print(f"⚠️ [Tab {index}] Skipping {domain} due to failed domain availability check.")
         return
 
-    print(f"✅ Updating row: verified=True, is_available={is_available}")
+    print(f"✅ [Tab {index}] Updating row: verified=True, is_available={is_available}")
     supabase.table("Clickyleaks").update({
         "verified": True,
         "is_available": is_available
     }).eq("id", row_id).execute()
 
-    await asyncio.sleep(3)
-
 
 async def main():
-    print("🚀 Clickyleaks Verifier Started...")
+    print("🚀 Clickyleaks Optimized Verifier Started...")
 
     response = supabase.table("Clickyleaks") \
         .select("*") \
@@ -111,15 +110,20 @@ async def main():
         return
 
     async with async_playwright() as pw:
-        browser = await pw.firefox.launch(headless=True)
-        page = await browser.new_page()
+        browser = await pw.chromium.launch(headless=True)
+        page1 = await browser.new_page()
+        page2 = await browser.new_page()
 
-        for row in rows:
-            await update_row(row, page)
+        tasks = []
+        for i, row in enumerate(rows):
+            page = page1 if i % 2 == 0 else page2
+            tasks.append(process_row(row, page, i % 2 + 1))
+
+        await asyncio.gather(*tasks)
 
         await browser.close()
 
 
 if __name__ == "__main__":
-    print("🚀 Running Video + Domain Verifier...")
+    print("🚀 Running Optimized Video + Domain Verifier...")
     asyncio.run(main())
