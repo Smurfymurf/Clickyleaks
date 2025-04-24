@@ -27,11 +27,12 @@ jobs:
         run: |
           python -m playwright install --with-deps
 
-      - name: Run Verifier (Domainr)
+      - name: Run Video + Domain Verifier
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           DOMAINR_API_KEY: ${{ secrets.DOMAINR_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
-          echo "🚀 Running Video + Domain Verifier (Domainr)"
+          echo "🚀 Running Video + Domain Verifier..."
           python video_domain_verifier.py
