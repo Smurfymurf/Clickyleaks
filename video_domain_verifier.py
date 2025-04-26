@@ -2,6 +2,7 @@ import os
 import asyncio
 import random
 import time
+import re
 import requests
 from urllib.parse import urlparse, parse_qs
 from supabase import create_client, Client
@@ -38,11 +39,17 @@ def normalize_domain(domain: str) -> str:
             domain = "http://" + domain
         parsed = urlparse(domain)
         host = parsed.netloc or parsed.path
-        host = host.replace("www.", "")
-        parts = host.split(".")
-        return ".".join(parts[-2:]) if len(parts) >= 2 else host
+        host = host.replace("www.", "").strip()
+        host = re.sub(r'[^a-zA-Z0-9.-]', '', host)  # remove invalid chars
+        if host.endswith('.'):
+            host = host[:-1]
+        return host
     except:
         return domain
+
+def is_valid_domain(domain: str) -> bool:
+    # Only allow domains like example.com, example.co.uk etc.
+    return bool(re.match(r"^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$", domain))
 
 def extract_video_id(url_or_id: str) -> str:
     if "youtube.com/watch" in url_or_id:
@@ -53,6 +60,10 @@ def extract_video_id(url_or_id: str) -> str:
 
 def check_domain_domainr(domain: str, retries=2) -> bool:
     root = normalize_domain(domain)
+    if not is_valid_domain(root):
+        print(f"⚠️ Skipping invalid domain format: {root}")
+        return None
+
     url = f"https://domainr.p.rapidapi.com/v2/status?domain={root}"
     headers = {
         "X-RapidAPI-Key": DOMAINR_API_KEY,
@@ -151,7 +162,6 @@ async def process_row(row, page):
             view_count = await page.evaluate('''() => {
                 const el = document.querySelector('#count .view-count');
                 if (el) return parseInt(el.textContent.replace(/[^\\d]/g, '')) || 0;
-
                 const alt = [...document.querySelectorAll('span')]
                     .map(el => el.textContent)
                     .find(text => /\\d+ views/.test(text));
