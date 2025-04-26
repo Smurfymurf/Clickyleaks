@@ -14,6 +14,24 @@ TOTAL_CHUNKS = 100  # update if you add more
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+WELL_KNOWN_DOMAINS = {
+    "apple.com", "google.com", "facebook.com", "amazon.com", "youtube.com",
+    "microsoft.com", "netflix.com", "instagram.com", "paypal.com", "reddit.com",
+    "wikipedia.org", "tumblr.com", "github.com", "linkedin.com", "spotify.com",
+    "cnn.com", "bbc.com", "dropbox.com", "airbnb.com", "salesforce.com",
+    "tiktok.com", "ebay.com", "zoom.us", "whatsapp.com", "nytimes.com",
+    "oracle.com", "bing.com", "slack.com", "notion.so", "wordpress.com",
+    "vercel.app", "netlify.app", "figma.com", "medium.com", "shopify.com",
+    "yahoo.com", "pinterest.com", "imdb.com", "quora.com", "adobe.com",
+    "cloudflare.com", "soundcloud.com", "coursera.org", "kickstarter.com",
+    "mozilla.org", "forbes.com", "theguardian.com", "weather.com", "espn.com",
+    "msn.com", "okta.com", "bitbucket.org", "vimeo.com", "unsplash.com",
+    "canva.com", "zoom.com", "atlassian.com", "ycombinator.com", "stripe.com",
+    "zendesk.com", "hotstar.com", "reuters.com", "nationalgeographic.com",
+    "weebly.com", "behance.net", "dribbble.com", "skype.com", "opera.com",
+    "twitch.tv", "stackoverflow.com", "stackoverflow.blog"
+}
+
 def get_next_chunk_index():
     checked = supabase.table("Clickyleaks_KaggleCheckedChunks").select("chunk_name").execute()
     checked_chunks = {row["chunk_name"] for row in checked.data}
@@ -60,6 +78,15 @@ def send_discord_alert(domain, video_url):
 def extract_links(text):
     return re.findall(r'(https?://[^\s)]+)', text)
 
+def normalize_domain(domain: str) -> str:
+    try:
+        parsed = urlparse(domain)
+        host = parsed.netloc or parsed.path
+        host = host.replace("www.", "").lower().strip()
+        return host
+    except:
+        return domain.lower()
+
 def process_video(video):
     video_id = video.get("_id")
     if not video_id or already_scanned(video_id):
@@ -71,8 +98,11 @@ def process_video(video):
 
     for link in links:
         try:
-            domain = urlparse(link).netloc.lower()
+            domain = normalize_domain(link)
             if not domain or len(domain.split(".")) < 2:
+                continue
+            if domain in WELL_KNOWN_DOMAINS:
+                print(f"🚫 Skipping well-known domain: {domain}")
                 continue
         except Exception as e:
             print(f"⚠️ Skipping invalid URL: {link} ({e})")
