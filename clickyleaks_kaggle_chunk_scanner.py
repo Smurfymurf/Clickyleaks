@@ -42,10 +42,14 @@ def get_next_chunk_index():
     return None, None
 
 def mark_chunk_complete(chunk_name):
-    supabase.table("Clickyleaks_KaggleCheckedChunks").insert({
-        "chunk_name": chunk_name,
-        "scanned_at": datetime.utcnow().isoformat()
-    }).execute()
+    existing = supabase.table("Clickyleaks_KaggleCheckedChunks").select("id").eq("chunk_name", chunk_name).execute()
+    if not existing.data:
+        supabase.table("Clickyleaks_KaggleCheckedChunks").insert({
+            "chunk_name": chunk_name,
+            "scanned_at": datetime.utcnow().isoformat()
+        }).execute()
+    else:
+        print(f"⚠️ Chunk {chunk_name} already marked complete.")
 
 def already_scanned(video_id):
     result = supabase.table("Clickyleaks_KaggleChecked").select("id").eq("video_id", video_id).execute()
@@ -108,10 +112,10 @@ def process_video(video):
             print(f"⚠️ Skipping invalid URL: {link} ({e})")
             continue
 
-        is_available = is_domain_available(domain)
-        print(f"🔍 Logging domain: {domain} | Available: {is_available}")
+        is_domain_available_flag = is_domain_available(domain)
+        print(f"🔍 Logging domain: {domain} | Available: {is_domain_available_flag}")
 
-        if is_available:
+        if is_domain_available_flag:
             record = {
                 "domain": domain,
                 "full_url": link,
