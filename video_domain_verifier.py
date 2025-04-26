@@ -2,8 +2,8 @@ import os
 import asyncio
 import random
 import time
-import re
 import requests
+import re
 from urllib.parse import urlparse, parse_qs
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
@@ -39,17 +39,23 @@ def normalize_domain(domain: str) -> str:
             domain = "http://" + domain
         parsed = urlparse(domain)
         host = parsed.netloc or parsed.path
-        host = host.replace("www.", "").strip()
-        host = re.sub(r'[^a-zA-Z0-9.-]', '', host)  # remove invalid chars
-        if host.endswith('.'):
-            host = host[:-1]
-        return host
+        host = host.replace("www.", "")
+        host = re.sub(r'[^a-zA-Z0-9.-]', '', host)  # Remove bad characters
+        parts = host.split(".")
+        return ".".join(parts[-2:]) if len(parts) >= 2 else host
     except:
         return domain
 
 def is_valid_domain(domain: str) -> bool:
-    # Only allow domains like example.com, example.co.uk etc.
-    return bool(re.match(r"^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$", domain))
+    if not domain or len(domain) < 4:
+        return False
+    if domain.count(".") != 1:
+        return False
+    if domain.endswith((".", "-", "_")):
+        return False
+    if any(c in domain for c in " ,;/\\"):
+        return False
+    return True
 
 def extract_video_id(url_or_id: str) -> str:
     if "youtube.com/watch" in url_or_id:
@@ -60,10 +66,6 @@ def extract_video_id(url_or_id: str) -> str:
 
 def check_domain_domainr(domain: str, retries=2) -> bool:
     root = normalize_domain(domain)
-    if not is_valid_domain(root):
-        print(f"⚠️ Skipping invalid domain format: {root}")
-        return None
-
     url = f"https://domainr.p.rapidapi.com/v2/status?domain={root}"
     headers = {
         "X-RapidAPI-Key": DOMAINR_API_KEY,
@@ -113,7 +115,7 @@ def fetch_video_data_from_api(video_id):
 async def try_goto(page, url, retries=2):
     for attempt in range(retries + 1):
         try:
-            await asyncio.sleep(random.uniform(1.0, 3.0))  # random human delay
+            await asyncio.sleep(random.uniform(1.0, 3.0))
             await page.goto(url, timeout=20000, wait_until="domcontentloaded")
             await page.evaluate("window.scrollBy(0, 300);")
             await page.wait_for_timeout(2000)
@@ -138,6 +140,11 @@ async def process_row(row, page):
             "verified": True,
             "is_available": False
         }).eq("id", row_id).execute()
+        return
+
+    if not is_valid_domain(root_domain):
+        print(f"🗑️ Deleting junk domain: {root_domain}")
+        supabase.table("Clickyleaks").delete().eq("id", row_id).execute()
         return
 
     success = await try_goto(page, video_url)
