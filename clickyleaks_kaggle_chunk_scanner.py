@@ -10,7 +10,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 CHUNK_BASE_URL = "https://smurfymurf.github.io/clickyleaks-chunks/"
-TOTAL_CHUNKS = 100  # update if you add more
+TOTAL_CHUNKS = 1000  # update if you add more
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
