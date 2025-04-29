@@ -1,23 +1,17 @@
-import os
-import re
-import pandas as pd
-import requests
-from datetime import datetime
+import requests, re, os, pandas as pd
 from urllib.parse import urlparse
+from datetime import datetime
 from supabase import create_client, Client
 from kaggle.api.kaggle_api_extended import KaggleApi
 
-# === ENV CONFIG ===
+# === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+KAGGLE_USERNAME = os.getenv("KAGGLE_USERNAME")
+KAGGLE_KEY = os.getenv("KAGGLE_KEY")
 
-# === INIT SUPABASE ===
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# === CONSTANTS ===
-DATASET_SLUG = "canerkonuk/youtube-trending-videos-global"
-TARGET_FILE = "youtube_trending_videos_global.csv"
 
 WELL_KNOWN_DOMAINS = {
     "apple.com", "google.com", "facebook.com", "amazon.com", "youtube.com",
@@ -37,10 +31,13 @@ WELL_KNOWN_DOMAINS = {
     "twitch.tv", "stackoverflow.com", "stackoverflow.blog"
 }
 
-# === UTILS ===
-def already_scanned(video_id):
-    result = supabase.table("Clickyleaks_KaggleChecked").select("id").eq("video_id", video_id).execute()
-    return len(result.data) > 0
+def normalize_domain(link: str) -> str:
+    parsed = urlparse(link)
+    domain = parsed.netloc or parsed.path
+    return domain.lower().replace("www.", "").strip()
+
+def extract_links(text):
+    return re.findall(r'(https?://[^\s)]+)', str(text))
 
 def mark_video_scanned(video_id):
     supabase.table("Clickyleaks_KaggleChecked").insert({
@@ -48,87 +45,81 @@ def mark_video_scanned(video_id):
         "scanned_at": datetime.utcnow().isoformat()
     }).execute()
 
-def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text or "")
-
-def normalize_domain(url):
-    try:
-        domain = urlparse(url).netloc.lower().replace("www.", "").strip()
-        return domain
-    except:
-        return ""
-
-def is_domain_available(domain):
-    try:
-        res = requests.get(f"http://{domain}", timeout=5)
-        return False
-    except:
-        return True
-
 def send_discord_alert(domain, video_url):
     if not DISCORD_WEBHOOK_URL:
         return
-    message = {"content": f"🔥 Available domain found: `{domain}`\n🔗 Video: {video_url}"}
+    message = {
+        "content": f"🚨 Domain logged: `{domain}`\n🔗 Video: {video_url}"
+    }
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=message, timeout=5)
     except:
         pass
 
-def process_video(row):
-    video_id = row.get("video_id")
-    title = row.get("title")
-    description = row.get("description")
+def load_scanned_ids():
+    print("🔁 Loading scanned video IDs from Supabase...")
+    ids = set()
+    offset = 0
+    while True:
+        response = supabase.table("Clickyleaks_KaggleChecked").select("video_id").range(offset, offset + 999).execute()
+        if not response.data:
+            break
+        ids.update(row["video_id"] for row in response.data)
+        offset += 1000
+    print(f"✅ Loaded {len(ids)} previously scanned video IDs.")
+    return ids
 
-    if not video_id or already_scanned(video_id):
-        return
+def main():
+    print("🚀 Loading YouTube Trending dataset from Kaggle...")
+    dataset_slug = "canerkonuk/youtube-trending-videos-global"
+    target_file = "youtube_trending_videos_global.csv"
 
-    mark_video_scanned(video_id)
-    links = extract_links(description)
-    for link in links:
-        domain = normalize_domain(link)
-        if not domain or len(domain.split(".")) < 2:
+    api = KaggleApi()
+    api.authenticate()
+    print(f"Dataset URL: https://www.kaggle.com/datasets/{dataset_slug}")
+
+    api.dataset_download_file(dataset_slug, target_file, path=".", force=True)
+
+    df = pd.read_csv(target_file, low_memory=False)
+    scanned_ids = load_scanned_ids()
+    new_logged = 0
+    MAX_NEW_ENTRIES = 100
+
+    for _, row in df.iterrows():
+        if new_logged >= MAX_NEW_ENTRIES:
+            print("✅ Reached max new entries for this run.")
+            break
+
+        video_id = str(row.get("video_id"))
+        if not video_id or video_id in scanned_ids:
             continue
-        if domain in WELL_KNOWN_DOMAINS:
-            print(f"🚫 Skipping well-known domain: {domain}")
-            continue
 
-        available = is_domain_available(domain)
-        print(f"🔍 Logging domain: {domain} | Available: {available}")
-        if available:
-            record = {
+        description = str(row.get("description", ""))
+        links = extract_links(description)
+
+        for link in links:
+            domain = normalize_domain(link)
+            if not domain or len(domain.split(".")) < 2 or domain in WELL_KNOWN_DOMAINS:
+                continue
+
+            print(f"🆕 Logging domain: {domain} from video {video_id}")
+            supabase.table("Clickyleaks").insert({
                 "domain": domain,
                 "full_url": link,
                 "video_id": video_id,
                 "video_url": f"https://www.youtube.com/watch?v={video_id}",
-                "is_available": True,
+                "is_available": None,
                 "discovered_at": datetime.utcnow().isoformat(),
                 "scanned_at": datetime.utcnow().isoformat(),
-                "view_count": 0,
-                "video_title": title
-            }
-            supabase.table("Clickyleaks").insert(record).execute()
-            send_discord_alert(domain, record["video_url"])
+                "view_count": 0
+            }).execute()
+
+            mark_video_scanned(video_id)
+            send_discord_alert(domain, f"https://www.youtube.com/watch?v={video_id}")
+            new_logged += 1
             break
 
-# === MAIN ===
-def main():
-    print("🚀 Loading YouTube Trending dataset from Kaggle...")
-    print("Dataset URL: https://www.kaggle.com/datasets/canerkonuk/youtube-trending-videos-global")
-
-    api = KaggleApi()
-    api.authenticate()
-
-    api.dataset_download_file(DATASET_SLUG, TARGET_FILE, path=".", force=True)
-    df = pd.read_csv(TARGET_FILE)
-
-    for _, row in df.iterrows():
-        process_video({
-            "video_id": row.get("video_id"),
-            "title": row.get("title"),
-            "description": row.get("description")
-        })
-
-    print("✅ Scan complete!")
+    print(f"🎉 Script completed. {new_logged} new domains logged.")
 
 if __name__ == "__main__":
     main()
