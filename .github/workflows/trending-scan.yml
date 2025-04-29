@@ -1,9 +1,10 @@
-name: Run Clickyleaks Trending Scanner
+# .github/workflows/trending-scanner.yml
+name: Clickyleaks Trending Scanner
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 9 * * *"  # Runs every day at 9AM UTC
+    - cron: '0 6 * * *'  # runs daily at 6AM UTC
+  workflow_dispatch:
 
 jobs:
   run-scanner:
@@ -13,26 +14,26 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
-        pip install kaggle pandas
+      - name: Install dependencies
+        run: |
+          pip install requests pandas supabase kaggle
 
-    - name: Set up Kaggle credentials
-      run: |
-        mkdir -p ~/.kaggle
-        echo "${{ secrets.KAGGLE_JSON }}" > ~/.kaggle/kaggle.json
-        chmod 600 ~/.kaggle/kaggle.json
+      - name: Create Kaggle API config
+        run: |
+          mkdir -p ~/.kaggle
+          echo "{\"username\":\"${KAGGLE_USERNAME}\",\"key\":\"${KAGGLE_KEY}\"}" > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
 
-    - name: Run Clickyleaks Trending Scanner
-      run: python clickyleaks_trending_scanner.py
+      - name: Run Trending Scanner
+        run: python clickyleaks_trending_scanner.py
