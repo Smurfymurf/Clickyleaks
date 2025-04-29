@@ -1,32 +1,32 @@
 name: Clickyleaks Dynamic Explorer
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 9,15,21 * * *" # 3 times a day UTC
+    - cron: '0 */3 * * *'  # Every 3 hours
+  workflow_dispatch:
 
 jobs:
   explore:
     runs-on: ubuntu-latest
-
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+    timeout-minutes: 50
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-      - name: Install dependencies
-        run: |
-          pip install playwright supabase requests
-          playwright install chromium
+    - name: Install dependencies
+      run: |
+        pip install playwright supabase requests
+        playwright install chromium
 
-      - name: Run Clickyleaks Dynamic Explorer
-        run: python clickyleaks_dynamic_explorer.py
+    - name: Run Clickyleaks Dynamic Explorer
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: python clickyleaks_dynamic_explorer.py
