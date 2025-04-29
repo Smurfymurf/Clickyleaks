@@ -1,0 +1,32 @@
+name: Scan Trending Videos for Expired Domains
+
+on:
+  schedule:
+    - cron: '0 5 * * *'  # runs daily at 5:00 UTC
+  workflow_dispatch:     # allows manual trigger
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install kagglehub[pandas-datasets] supabase requests
+
+      - name: Run Clickyleaks Trending Scanner
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python clickyleaks_trending_scanner.py
