@@ -1,0 +1,4 @@
+- run: |
+    echo "$KAGGLE_JSON"
+  env:
+    KAGGLE_JSON: ${{ secrets.KAGGLE_JSON }}
