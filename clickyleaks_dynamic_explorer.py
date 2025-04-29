@@ -138,7 +138,7 @@ async def main():
     print(f"📥 Loading seed chunk: {chunk_url}")
 
     chunk = requests.get(chunk_url).json()
-    seed_videos = chunk["videos"]
+    seed_videos = chunk
 
     if last_video_index >= len(seed_videos):
         chunk_index += 1
