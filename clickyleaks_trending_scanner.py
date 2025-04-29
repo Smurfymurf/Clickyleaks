@@ -1,19 +1,17 @@
+# clickyleaks_trending_scanner.py
 import os
 import re
 import requests
 import pandas as pd
-from urllib.parse import urlparse
 from datetime import datetime
-from supabase import create_client, Client
+from urllib.parse import urlparse
 from kaggle.api.kaggle_api_extended import KaggleApi
+from supabase import create_client, Client
 
 # === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-DATASET = "canerkonuk/youtube-trending-videos-global"
-FILE_NAME = "US_youtube_trending_data.csv"
-DOWNLOAD_DIR = "kaggle_trending"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -27,25 +25,11 @@ WELL_KNOWN_DOMAINS = {
     "vercel.app", "netlify.app", "figma.com", "medium.com", "shopify.com",
     "yahoo.com", "pinterest.com", "imdb.com", "quora.com", "adobe.com",
     "cloudflare.com", "soundcloud.com", "coursera.org", "kickstarter.com",
-    "mozilla.org", "forbes.com", "theguardian.com", "weather.com", "espn.com",
-    "msn.com", "okta.com", "bitbucket.org", "vimeo.com", "unsplash.com",
-    "canva.com", "zoom.com", "atlassian.com", "ycombinator.com", "stripe.com",
-    "zendesk.com", "hotstar.com", "reuters.com", "nationalgeographic.com",
-    "weebly.com", "behance.net", "dribbble.com", "skype.com", "opera.com",
-    "twitch.tv", "stackoverflow.com", "stackoverflow.blog"
+    "mozilla.org", "forbes.com", "theguardian.com", "espn.com", "msn.com",
+    "okta.com", "bitbucket.org", "vimeo.com", "unsplash.com", "canva.com",
+    "ycombinator.com", "stripe.com", "zendesk.com", "skype.com",
+    "twitch.tv", "stackoverflow.com"
 }
-
-def normalize_domain(domain: str) -> str:
-    try:
-        parsed = urlparse(domain)
-        host = parsed.netloc or parsed.path
-        host = host.replace("www.", "").lower().strip()
-        return host
-    except:
-        return domain.lower()
-
-def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text)
 
 def already_scanned(video_id):
     result = supabase.table("Clickyleaks_KaggleChecked").select("id").eq("video_id", video_id).execute()
@@ -57,9 +41,21 @@ def mark_video_scanned(video_id):
         "scanned_at": datetime.utcnow().isoformat()
     }).execute()
 
+def extract_links(text):
+    return re.findall(r'(https?://[^\s)]+)', text or "")
+
+def normalize_domain(domain: str) -> str:
+    try:
+        parsed = urlparse(domain)
+        host = parsed.netloc or parsed.path
+        host = host.replace("www.", "").lower().strip()
+        return host
+    except:
+        return domain.lower()
+
 def is_domain_available(domain):
     try:
-        requests.get(f"http://{domain}", timeout=5)
+        res = requests.get(f"http://{domain}", timeout=5)
         return False
     except:
         return True
@@ -75,14 +71,11 @@ def send_discord_alert(domain, video_url):
     except:
         pass
 
-def process_video(video):
-    video_id = video["video_id"]
-    description = video.get("description", "")
+def process_row(row):
+    video_id = row.get("video_id")
+    description = row.get("description")
 
-    if already_scanned(video_id):
-        return
-
-    if "http" not in description:
+    if not video_id or already_scanned(video_id):
         return
 
     mark_video_scanned(video_id)
@@ -119,33 +112,28 @@ def process_video(video):
             break
 
 def main():
-    print("🚀 Downloading YouTube trending dataset...")
+    print("Loading YouTube Trending dataset from Kaggle...")
 
     api = KaggleApi()
     api.authenticate()
 
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    api.dataset_download_file(DATASET, FILE_NAME, path=DOWNLOAD_DIR, force=True)
+    dataset_slug = "canerkonuk/youtube-trending-videos-global"
+    target_file = "US_youtube_trending_data.csv"
 
-    csv_path = os.path.join(DOWNLOAD_DIR, FILE_NAME)
-    if not csv_path.endswith(".csv"):
-        csv_path += ".zip"
-        import zipfile
-        with zipfile.ZipFile(csv_path, 'r') as zip_ref:
-            zip_ref.extractall(DOWNLOAD_DIR)
-        csv_path = os.path.join(DOWNLOAD_DIR, FILE_NAME)
+    api.dataset_download_file(dataset_slug, target_file, path=".", force=True)
 
-    df = pd.read_csv(csv_path)
-    print(f"✅ Loaded {len(df)} trending videos")
+    import zipfile
+    with zipfile.ZipFile(f"{target_file}.zip", 'r') as zip_ref:
+        zip_ref.extractall(".")
+
+    df = pd.read_csv(target_file)
+    print(f"✅ Loaded {len(df)} records.")
 
     for _, row in df.iterrows():
-        video = {
+        process_row({
             "video_id": row.get("video_id"),
-            "description": row.get("description", "")
-        }
-        process_video(video)
-
-    print("✅ Trending scan complete.")
+            "description": row.get("description")
+        })
 
 if __name__ == "__main__":
     main()
