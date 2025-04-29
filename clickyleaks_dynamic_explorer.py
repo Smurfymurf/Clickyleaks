@@ -21,10 +21,14 @@ def already_scanned(video_id):
     return len(res.data) > 0
 
 def mark_video_scanned(video_id):
-    supabase.table("clickyleaks_dynamicchecked").insert({
-        "video_id": video_id,
-        "scanned_at": datetime.utcnow().isoformat()
-    }).execute()
+    try:
+        supabase.table("Clickyleaks_DynamicChecked").insert({
+            "video_id": video_id,
+            "scanned_at": datetime.utcnow().isoformat()
+        }).execute()
+    except Exception as e:
+        # Duplicate video_id is OK, just skip
+        print(f"⚠️ Duplicate video_id (already scanned): {video_id}")
 
 def extract_links(text):
     return re.findall(r'https?://[^\s)"]+', text)
