@@ -1,172 +1,161 @@
 import asyncio
-import json
 import os
 import re
-from datetime import datetime, timedelta
-
 import requests
+from datetime import datetime, timedelta
+from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 from supabase import create_client
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-WELL_KNOWN_DOMAINS = ["youtube.com", "facebook.com", "instagram.com", "twitter.com", "linkedin.com", "tiktok.com", "google.com", "bit.ly"]
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
-CHUNK_BASE_URL = "https://smurfymurf.github.io/clickyleaks-chunks/"
-CHUNK_TABLE = "Clickyleaks_SeedProgress"
-SCANNED_VIDEOS_TABLE = "Clickyleaks_DynamicChecked"
-DOMAINS_TABLE = "Clickyleaks"
+WELL_KNOWN_DOMAINS = ["youtube.com", "facebook.com", "twitter.com", "instagram.com", "google.com", "bit.ly", "youtu.be"]
+CHUNK_BASE_URL = "https://smurfymurf.github.io/clickyleaks-chunks/chunk_"
+VIDEOS_PER_RUN = 200
+MIN_AGE_DAYS = 3 * 365
+MAX_AGE_DAYS = 7 * 365
 
-VIDEO_AGE_MIN = 3  # in years
-VIDEO_AGE_MAX = 7
+def already_scanned(video_id):
+    res = supabase.table("Clickyleaks_DynamicChecked").select("id").eq("video_id", video_id).execute()
+    return len(res.data) > 0
 
-VIDEOS_PER_RUN = 200  # Cap to conserve GitHub minutes
+def mark_video_scanned(video_id):
+    supabase.table("Clickyleaks_DynamicChecked").insert({"video_id": video_id}).execute()
 
+def soft_check_domain(domain):
+    try:
+        response = requests.head(f"http://{domain}", timeout=5, allow_redirects=True)
+        if response.status_code >= 400:
+            return True
+    except Exception:
+        return True
+    return False
+
+def add_to_clickyleaks(domain, video_id):
+    supabase.table("Clickyleaks").insert({
+        "domain": domain,
+        "source_video_id": video_id,
+        "is_verified": False
+    }).execute()
 
 def get_current_chunk_progress():
-    result = supabase.table(CHUNK_TABLE).select("*").order("id", desc=True).limit(1).execute()
+    result = supabase.table("Clickyleaks_SeedProgress").select("*").limit(1).execute()
     if result.data:
         return result.data[0]["chunk_index"], result.data[0]["video_index"]
     return 0, 0
 
-
 def update_chunk_progress(chunk_index, video_index):
-    supabase.table(CHUNK_TABLE).insert({
+    supabase.table("Clickyleaks_SeedProgress").upsert({
+        "id": 1,
         "chunk_index": chunk_index,
         "video_index": video_index,
         "timestamp": datetime.utcnow().isoformat()
     }).execute()
 
+async def fetch_description(page, video_id):
+    await page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=60000)
+    await page.wait_for_selector('meta[name="description"]', timeout=10000)
+    content = await page.locator('meta[name="description"]').get_attribute("content")
+    return content or ""
 
-def already_scanned(video_id):
-    res = supabase.table(SCANNED_VIDEOS_TABLE).select("id").eq("video_id", video_id).execute()
-    return len(res.data) > 0
+def extract_domains(text):
+    urls = re.findall(r'(https?://[^\s]+)', text)
+    domains = set()
+    for url in urls:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        if any(wkd in domain for wkd in WELL_KNOWN_DOMAINS):
+            continue
+        domains.add(domain)
+    return list(domains)
 
-
-def mark_video_scanned(video_id):
-    supabase.table(SCANNED_VIDEOS_TABLE).insert({
-        "video_id": video_id,
-        "scanned_at": datetime.utcnow().isoformat()
-    }).execute()
-
-
-def extract_domains(description):
-    urls = re.findall(r'(https?://[^\s]+)', description)
-    clean_urls = [url.split("?")[0].split("#")[0] for url in urls]
-    domains = [re.sub(r'^https?://(www\.)?', '', url).strip("/") for url in clean_urls]
-    return list(set(domains))
-
-
-def is_well_known(domain):
-    return any(domain.startswith(wkd) or domain in wkd for wkd in WELL_KNOWN_DOMAINS)
-
-
-def soft_check(domain):
+def is_within_age_range(published_date):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(f"http://{domain}", headers=headers, timeout=5)
-        return r.status_code not in [404, 502, 503]
-    except:
+        published = datetime.fromisoformat(published_date.replace("Z", "+00:00"))
+        age = (datetime.utcnow() - published).days
+        return MIN_AGE_DAYS <= age <= MAX_AGE_DAYS
+    except Exception:
         return False
 
+async def get_related_videos(page, video_id, max_related):
+    await page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=60000)
+    try:
+        await page.wait_for_selector("ytd-watch-next-secondary-results-renderer", timeout=15000)
+    except Exception:
+        print(f"⚠️ Timeout waiting for related for {video_id}, skipping...")
+        return []
 
-async def fetch_video_description(page, video_id):
-    await page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=30000)
-    await page.wait_for_selector("meta[name='description']", timeout=10000)
-    desc = await page.locator("meta[name='description']").get_attribute("content")
-    return desc or ""
+    related_elements = await page.query_selector_all("ytd-compact-video-renderer")
+    related_ids = []
 
+    for element in related_elements:
+        href = await element.get_attribute("href")
+        if href and "/watch?v=" in href:
+            related_id = href.split("v=")[-1].split("&")[0]
+            if related_id != video_id:
+                related_ids.append(related_id)
+        if len(related_ids) >= max_related:
+            break
 
-async def get_video_metadata(page, video_id):
-    await page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=30000)
-    await page.wait_for_selector("meta[itemprop='uploadDate']", timeout=10000)
-    date_str = await page.locator("meta[itemprop='uploadDate']").get_attribute("content")
-    return datetime.strptime(date_str, "%Y-%m-%d") if date_str else None
-
+    return related_ids
 
 async def process_video(page, video_id):
     if already_scanned(video_id):
         return False
 
-    mark_video_scanned(video_id)
-
-    upload_date = await get_video_metadata(page, video_id)
-    if not upload_date:
-        return False
-
-    age = (datetime.utcnow() - upload_date).days / 365
-    if not (VIDEO_AGE_MIN <= age <= VIDEO_AGE_MAX):
-        return False
-
-    description = await fetch_video_description(page, video_id)
+    description = await fetch_description(page, video_id)
     domains = extract_domains(description)
-
-    found_domains = 0
+    found = False
     for domain in domains:
-        if is_well_known(domain):
-            continue
-        if not soft_check(domain):
-            supabase.table(DOMAINS_TABLE).insert({
-                "domain": domain,
-                "video_id": video_id,
-                "found_at": datetime.utcnow().isoformat(),
-                "is_available": None,
-                "verified": False,
-                "source": "YouTube Dynamic"
-            }).execute()
-            found_domains += 1
-
-    return found_domains > 0
-
-
-async def get_related_videos(page, start_video_id, max_results):
-    await page.goto(f"https://www.youtube.com/watch?v={start_video_id}", timeout=30000)
-    await page.wait_for_selector("ytd-watch-next-secondary-results-renderer", timeout=10000)
-    hrefs = await page.locator("a#thumbnail").evaluate_all("nodes => nodes.map(n => n.href)")
-    video_ids = [re.search(r"v=([a-zA-Z0-9_-]{11})", h).group(1) for h in hrefs if "watch?v=" in h]
-    unique_ids = list(dict.fromkeys(video_ids))  # Deduplicate
-    return unique_ids[:max_results]
-
+        if soft_check_domain(domain):
+            add_to_clickyleaks(domain, video_id)
+            print(f"✅ Found expired-looking domain: {domain}")
+            found = True
+    mark_video_scanned(video_id)
+    return found
 
 async def main():
     print("🚀 Clickyleaks Dynamic Explorer Starting...")
-
     chunk_index, last_video_index = get_current_chunk_progress()
-    chunk_url = f"{CHUNK_BASE_URL}chunk_{chunk_index}.json"
-    print(f"📥 Loading seed chunk: {chunk_url}")
-
+    chunk_url = f"{CHUNK_BASE_URL}{chunk_index}.json"
     chunk = requests.get(chunk_url).json()
-    seed_videos = chunk
-
-    if last_video_index >= len(seed_videos):
-        chunk_index += 1
-        last_video_index = 0
-        chunk_url = f"{CHUNK_BASE_URL}chunk_{chunk_index}.json"
-        chunk = requests.get(chunk_url).json()
-        seed_videos = chunk["videos"]
-        print(f"➡️ Moving to next chunk: {chunk_index}")
-
-    start_video_id = seed_videos[last_video_index]
-    print(f"🌱 Seed: {start_video_id}")
-    update_chunk_progress(chunk_index, last_video_index + 1)
+    seed_videos = chunk if isinstance(chunk, list) else chunk["videos"]
+    found_count = 0
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
-        related_ids = await get_related_videos(page, start_video_id, VIDEOS_PER_RUN)
 
-        for video_id in related_ids:
-            try:
-                found = await process_video(page, video_id)
-                if found:
-                    print(f"✅ Found expired domain(s) in video {video_id}")
-            except Exception as e:
-                print(f"⚠️ Error processing video {video_id}: {e}")
+        for i in range(last_video_index, len(seed_videos)):
+            if found_count >= VIDEOS_PER_RUN:
+                break
+            seed = seed_videos[i]
+            start_video_id = seed.get("_id") or seed.get("video_id")
+            published_date = seed.get("publishedDate") or ""
+
+            print(f"🌱 Seed: {seed}")
+            if not is_within_age_range(published_date):
+                print("⏭️ Video outside age range, skipping seed...")
+                continue
+
+            related_ids = await get_related_videos(page, start_video_id, VIDEOS_PER_RUN)
+            for vid in related_ids:
+                if found_count >= VIDEOS_PER_RUN:
+                    break
+                if await process_video(page, vid):
+                    found_count += 1
+
+            update_chunk_progress(chunk_index, i + 1)
 
         await browser.close()
 
+    print(f"✅ Done. Domains found: {found_count}")
+    if found_count > 0:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": f"Clickyleaks run complete. Found {found_count} potential expired domains."})
 
 if __name__ == "__main__":
     asyncio.run(main())
