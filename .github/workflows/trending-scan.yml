@@ -1,15 +1,13 @@
-# .github/workflows/trending-scanner.yml
 name: Clickyleaks Trending Scanner
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # runs daily at 6AM UTC
+    - cron: '0 5 * * *'  # Runs every day at 5AM UTC
   workflow_dispatch:
 
 jobs:
-  run-scanner:
+  scan-trending:
     runs-on: ubuntu-latest
-
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -18,7 +16,8 @@ jobs:
       KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -27,13 +26,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests pandas supabase kaggle
+          pip install pandas requests supabase kaggle
 
-      - name: Create Kaggle API config
+      - name: Configure Kaggle
         run: |
           mkdir -p ~/.kaggle
           echo "{\"username\":\"${KAGGLE_USERNAME}\",\"key\":\"${KAGGLE_KEY}\"}" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
 
-      - name: Run Trending Scanner
+      - name: Run scanner
         run: python clickyleaks_trending_scanner.py
