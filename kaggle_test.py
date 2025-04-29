@@ -1,14 +1,18 @@
 from kaggle.api.kaggle_api_extended import KaggleApi
 
-print("🚀 Testing Kaggle API authentication...")
+def main():
+    print("🚀 Testing Kaggle API authentication...")
 
-api = KaggleApi()
-api.authenticate()
+    api = KaggleApi()
+    api.authenticate()
 
-print("✅ Authenticated successfully!")
+    print("✅ Authenticated successfully!")
 
-# List 5 public datasets
-print("📦 Listing 5 datasets:")
-datasets = api.dataset_list(search="", page=1, max_results=5)
-for d in datasets:
-    print(f"📁 {d.title} by {d.ref}")
+    print("📦 Fetching a few public datasets:")
+
+    datasets = api.dataset_list(sort_by="hottest", page=1, max_results=5)
+    for dataset in datasets:
+        print(f"📁 {dataset.title} by {dataset.ref}")
+
+if __name__ == "__main__":
+    main()
