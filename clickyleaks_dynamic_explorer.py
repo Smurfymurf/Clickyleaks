@@ -22,7 +22,7 @@ DOMAINS_TABLE = "Clickyleaks"
 VIDEO_AGE_MIN = 3  # in years
 VIDEO_AGE_MAX = 7
 
-VIDEOS_PER_RUN = 100  # Cap to conserve GitHub minutes
+VIDEOS_PER_RUN = 200  # Cap to conserve GitHub minutes
 
 
 def get_current_chunk_progress():
