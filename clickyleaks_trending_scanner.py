@@ -1,12 +1,11 @@
 import os
 import re
 import requests
+import pandas as pd
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
-import pandas as pd
-import kagglehub
-from kagglehub import KaggleDatasetAdapter
+from kagglehub import download_dataset_file
 
 # === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -119,13 +118,14 @@ def process_video(video):
 def main():
     print("🚀 Loading YouTube Trending dataset from Kaggle...")
 
-    df = kagglehub.load_dataset(
-        KaggleDatasetAdapter.PANDAS,
+    file_path = download_dataset_file(
         "canerkonuk/youtube-trending-videos-global",
-        file_path="US_youtube_trending_data.csv"
+        "US_youtube_trending_data.csv"
     )
 
-    print(f"✅ Loaded {len(df)} videos, filtering and scanning...")
+    df = pd.read_csv(file_path)
+
+    print(f"✅ Loaded {len(df)} videos, scanning...")
 
     for _, row in df.iterrows():
         video = {
