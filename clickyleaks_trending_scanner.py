@@ -1,8 +1,7 @@
-# clickyleaks_trending_scanner.py
 import os
 import re
-import requests
 import pandas as pd
+import requests
 from datetime import datetime
 from urllib.parse import urlparse
 from kaggle.api.kaggle_api_extended import KaggleApi
@@ -12,6 +11,13 @@ from supabase import create_client, Client
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+DATASET_SLUG = "canerkonuk/youtube-trending-videos-global"
+TARGET_FILE = "youtube_trending_videos_global.csv"
+KAGGLE_FILENAME = "./" + TARGET_FILE
+
+CHUNK_SIZE = 1000        # rows per chunk
+MAX_RESULTS = 20         # max videos to process per run
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -25,35 +31,43 @@ WELL_KNOWN_DOMAINS = {
     "vercel.app", "netlify.app", "figma.com", "medium.com", "shopify.com",
     "yahoo.com", "pinterest.com", "imdb.com", "quora.com", "adobe.com",
     "cloudflare.com", "soundcloud.com", "coursera.org", "kickstarter.com",
-    "mozilla.org", "forbes.com", "theguardian.com", "espn.com", "msn.com",
-    "okta.com", "bitbucket.org", "vimeo.com", "unsplash.com", "canva.com",
-    "ycombinator.com", "stripe.com", "zendesk.com", "skype.com",
-    "twitch.tv", "stackoverflow.com"
+    "mozilla.org", "forbes.com", "theguardian.com", "weather.com", "espn.com",
+    "msn.com", "okta.com", "bitbucket.org", "vimeo.com", "unsplash.com",
+    "canva.com", "zoom.com", "atlassian.com", "ycombinator.com", "stripe.com",
+    "zendesk.com", "hotstar.com", "reuters.com", "nationalgeographic.com",
+    "weebly.com", "behance.net", "dribbble.com", "skype.com", "opera.com",
+    "twitch.tv", "stackoverflow.com", "stackoverflow.blog"
 }
 
-def already_scanned(video_id):
-    result = supabase.table("Clickyleaks_KaggleChecked").select("id").eq("video_id", video_id).execute()
-    return len(result.data) > 0
+def download_dataset():
+    print("🚀 Loading YouTube Trending dataset from Kaggle...")
+    api = KaggleApi()
+    api.authenticate()
+    api.dataset_download_file(DATASET_SLUG, TARGET_FILE, path=".", force=True)
 
-def mark_video_scanned(video_id):
+def extract_links(text):
+    return re.findall(r'(https?://[^\s)]+)', text)
+
+def normalize_domain(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc or parsed.path
+        host = host.replace("www.", "").lower().strip()
+        return host
+    except:
+        return url.lower().strip()
+
+def already_scanned(video_id: str) -> bool:
+    res = supabase.table("Clickyleaks_KaggleChecked").select("id").eq("video_id", video_id).execute()
+    return len(res.data) > 0
+
+def mark_scanned(video_id: str):
     supabase.table("Clickyleaks_KaggleChecked").insert({
         "video_id": video_id,
         "scanned_at": datetime.utcnow().isoformat()
     }).execute()
 
-def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text or "")
-
-def normalize_domain(domain: str) -> str:
-    try:
-        parsed = urlparse(domain)
-        host = parsed.netloc or parsed.path
-        host = host.replace("www.", "").lower().strip()
-        return host
-    except:
-        return domain.lower()
-
-def is_domain_available(domain):
+def is_domain_available(domain: str) -> bool:
     try:
         res = requests.get(f"http://{domain}", timeout=5)
         return False
@@ -72,31 +86,19 @@ def send_discord_alert(domain, video_url):
         pass
 
 def process_row(row):
-    video_id = row.get("video_id")
-    description = row.get("description")
+    video_id = row.get("video_id") or row.get("video_id", "")
+    description = str(row.get("description", ""))
 
-    if not video_id or already_scanned(video_id):
-        return
-
-    mark_video_scanned(video_id)
     links = extract_links(description)
-
     for link in links:
-        try:
-            domain = normalize_domain(link)
-            if not domain or len(domain.split(".")) < 2:
-                continue
-            if domain in WELL_KNOWN_DOMAINS:
-                print(f"🚫 Skipping well-known domain: {domain}")
-                continue
-        except Exception as e:
-            print(f"⚠️ Skipping invalid URL: {link} ({e})")
+        domain = normalize_domain(link)
+        if not domain or len(domain.split(".")) < 2:
             continue
-
-        is_available = is_domain_available(domain)
-        print(f"🔍 Logging domain: {domain} | Available: {is_available}")
-
-        if is_available:
+        if domain in WELL_KNOWN_DOMAINS:
+            print(f"🚫 Skipping well-known domain: {domain}")
+            continue
+        if is_domain_available(domain):
+            print(f"✅ Domain available: {domain}")
             record = {
                 "domain": domain,
                 "full_url": link,
@@ -111,29 +113,26 @@ def process_row(row):
             send_discord_alert(domain, record["video_url"])
             break
 
+def process_trending_dataset():
+    found = 0
+    for chunk in pd.read_csv(KAGGLE_FILENAME, chunksize=CHUNK_SIZE):
+        for _, row in chunk.iterrows():
+            if found >= MAX_RESULTS:
+                return
+            if not isinstance(row.get("description"), str):
+                continue
+            if not re.search(r'https?://', row["description"]):
+                continue
+            video_id = str(row.get("video_id") or row.get("video_id", "")).strip()
+            if already_scanned(video_id):
+                continue
+            mark_scanned(video_id)
+            process_row(row)
+            found += 1
+
 def main():
-    print("Loading YouTube Trending dataset from Kaggle...")
-
-    api = KaggleApi()
-    api.authenticate()
-
-    dataset_slug = "canerkonuk/youtube-trending-videos-global"
-    target_file = "US_youtube_trending_data.csv"
-
-    api.dataset_download_file(dataset_slug, target_file, path=".", force=True)
-
-    import zipfile
-    with zipfile.ZipFile(f"{target_file}.zip", 'r') as zip_ref:
-        zip_ref.extractall(".")
-
-    df = pd.read_csv(target_file)
-    print(f"✅ Loaded {len(df)} records.")
-
-    for _, row in df.iterrows():
-        process_row({
-            "video_id": row.get("video_id"),
-            "description": row.get("description")
-        })
+    download_dataset()
+    process_trending_dataset()
 
 if __name__ == "__main__":
     main()
