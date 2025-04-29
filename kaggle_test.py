@@ -10,9 +10,9 @@ def main():
 
     print("📦 Fetching a few public datasets:")
 
-    datasets = api.dataset_list(sort_by="hottest", page=1, max_results=5)
-    for dataset in datasets:
-        print(f"📁 {dataset.title} by {dataset.ref}")
+    datasets = api.dataset_list(sort_by="hottest", page=1)
+    for i, dataset in enumerate(datasets[:5]):  # Manually limit results
+        print(f"📁 {i+1}. {dataset.title} by {dataset.ref}")
 
 if __name__ == "__main__":
     main()
