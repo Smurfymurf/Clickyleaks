@@ -5,12 +5,15 @@ import pandas as pd
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
-from kagglehub import download_dataset_file
+from kaggle.api.kaggle_api_extended import KaggleApi
 
 # === CONFIG ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+DATASET = "canerkonuk/youtube-trending-videos-global"
+FILE_NAME = "US_youtube_trending_data.csv"
+DOWNLOAD_DIR = "kaggle_trending"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -116,16 +119,24 @@ def process_video(video):
             break
 
 def main():
-    print("🚀 Loading YouTube Trending dataset from Kaggle...")
+    print("🚀 Downloading YouTube trending dataset...")
 
-    file_path = download_dataset_file(
-        "canerkonuk/youtube-trending-videos-global",
-        "US_youtube_trending_data.csv"
-    )
+    api = KaggleApi()
+    api.authenticate()
 
-    df = pd.read_csv(file_path)
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    api.dataset_download_file(DATASET, FILE_NAME, path=DOWNLOAD_DIR, force=True)
 
-    print(f"✅ Loaded {len(df)} videos, scanning...")
+    csv_path = os.path.join(DOWNLOAD_DIR, FILE_NAME)
+    if not csv_path.endswith(".csv"):
+        csv_path += ".zip"
+        import zipfile
+        with zipfile.ZipFile(csv_path, 'r') as zip_ref:
+            zip_ref.extractall(DOWNLOAD_DIR)
+        csv_path = os.path.join(DOWNLOAD_DIR, FILE_NAME)
+
+    df = pd.read_csv(csv_path)
+    print(f"✅ Loaded {len(df)} trending videos")
 
     for _, row in df.iterrows():
         video = {
@@ -134,7 +145,7 @@ def main():
         }
         process_video(video)
 
-    print("✅ Finished trending scan.")
+    print("✅ Trending scan complete.")
 
 if __name__ == "__main__":
     main()
