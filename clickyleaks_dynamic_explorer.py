@@ -14,7 +14,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Constants
 CHUNK_BASE_URL = "https://smurfymurf.github.io/clickyleaks-chunks/"
-CHUNK_TOTAL = 110
+CHUNK_TOTAL = 1000
 VIDEOS_PER_RUN = 200
 AGE_MIN_YEARS = 3
 AGE_MAX_YEARS = 7
