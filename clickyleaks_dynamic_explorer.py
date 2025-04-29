@@ -17,7 +17,7 @@ WELL_KNOWN_DOMAINS = {"google.com", "facebook.com", "youtube.com", "amazon.com",
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def already_scanned(video_id):
-    res = supabase.table("clickyleaks_dynamicchecked").select("id").eq("video_id", video_id).execute()
+    res = supabase.table("Clickyleaks_DynamicChecked").select("id").eq("video_id", video_id).execute()
     return len(res.data) > 0
 
 def mark_video_scanned(video_id):
