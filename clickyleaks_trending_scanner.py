@@ -1,10 +1,10 @@
 import os
 import re
 import requests
-import pandas as pd
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
+import pandas as pd
 import kagglehub
 from kagglehub import KaggleDatasetAdapter
 
@@ -43,7 +43,7 @@ def normalize_domain(domain: str) -> str:
         return domain.lower()
 
 def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text or "")
+    return re.findall(r'(https?://[^\s)]+)', text)
 
 def already_scanned(video_id):
     result = supabase.table("Clickyleaks_KaggleChecked").select("id").eq("video_id", video_id).execute()
@@ -57,7 +57,7 @@ def mark_video_scanned(video_id):
 
 def is_domain_available(domain):
     try:
-        res = requests.get(f"http://{domain}", timeout=5)
+        requests.get(f"http://{domain}", timeout=5)
         return False
     except:
         return True
@@ -66,17 +66,21 @@ def send_discord_alert(domain, video_url):
     if not DISCORD_WEBHOOK_URL:
         return
     message = {
-        "content": f"\ud83d\udd25 Available domain found: `{domain}`\n\ud83d\udd17 Video: {video_url}"
+        "content": f"🔥 Available domain found: `{domain}`\n🔗 Video: {video_url}"
     }
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=message, timeout=5)
     except:
         pass
 
-def process_video(row):
-    video_id = row.get("video_id") or row.get("video_id_yt")
-    description = row.get("description", "")
-    if not video_id or not description or already_scanned(video_id):
+def process_video(video):
+    video_id = video["video_id"]
+    description = video.get("description", "")
+
+    if already_scanned(video_id):
+        return
+
+    if "http" not in description:
         return
 
     mark_video_scanned(video_id)
@@ -88,16 +92,16 @@ def process_video(row):
             if not domain or len(domain.split(".")) < 2:
                 continue
             if domain in WELL_KNOWN_DOMAINS:
-                print(f"\ud83d\udeab Skipping well-known domain: {domain}")
+                print(f"🚫 Skipping well-known domain: {domain}")
                 continue
         except Exception as e:
-            print(f"\u26a0\ufe0f Skipping invalid URL: {link} ({e})")
+            print(f"⚠️ Skipping invalid URL: {link} ({e})")
             continue
 
-        available = is_domain_available(domain)
-        print(f"\ud83d\udd0d Logging domain: {domain} | Available: {available}")
+        is_available = is_domain_available(domain)
+        print(f"🔍 Logging domain: {domain} | Available: {is_available}")
 
-        if available:
+        if is_available:
             record = {
                 "domain": domain,
                 "full_url": link,
@@ -113,16 +117,24 @@ def process_video(row):
             break
 
 def main():
-    print("\ud83d\ude80 Loading YouTube Trending dataset from Kaggle...")
+    print("🚀 Loading YouTube Trending dataset from Kaggle...")
+
     df = kagglehub.load_dataset(
         KaggleDatasetAdapter.PANDAS,
         "canerkonuk/youtube-trending-videos-global",
-        "US_youtube_trending_data.csv"
+        file_path="US_youtube_trending_data.csv"
     )
-    print(f"\u2705 Loaded {len(df)} rows")
+
+    print(f"✅ Loaded {len(df)} videos, filtering and scanning...")
 
     for _, row in df.iterrows():
-        process_video(row)
+        video = {
+            "video_id": row.get("video_id"),
+            "description": row.get("description", "")
+        }
+        process_video(video)
+
+    print("✅ Finished trending scan.")
 
 if __name__ == "__main__":
     main()
