@@ -2,7 +2,7 @@ name: Clickyleaks Dynamic Explorer
 
 on:
   schedule:
-    - cron: '0 0,8,16 * * *'  # Run 3x per day UTC
+    - cron: '0 0,8,16 * * *'  # Run 3x daily UTC
   workflow_dispatch:
 
 jobs:
@@ -25,8 +25,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install playwright supabase
-          playwright install
+          pip install playwright supabase requests
+          playwright install chromium
+
+      - name: Patch Playwright to avoid missing libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libxss1 libasound2 libatk-bridge2.0-0 libgtk-3-0 libgbm1
 
       - name: Run Clickyleaks Dynamic Explorer
         run: python clickyleaks_dynamic_explorer.py
