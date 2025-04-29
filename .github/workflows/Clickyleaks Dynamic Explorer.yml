@@ -1,12 +1,12 @@
 name: Clickyleaks Dynamic Explorer
 
 on:
-  schedule:
-    - cron: '0 0,8,16 * * *'  # Run 3x daily UTC
   workflow_dispatch:
+  schedule:
+    - cron: "0 */8 * * *"  # Run every 8 hours, adjust as needed
 
 jobs:
-  run-dynamic-explorer:
+  dynamic-explorer:
     runs-on: ubuntu-latest
 
     env:
@@ -15,23 +15,18 @@ jobs:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           pip install playwright supabase requests
           playwright install chromium
-
-      - name: Patch Playwright to avoid missing libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libnss3 libxss1 libasound2 libatk-bridge2.0-0 libgtk-3-0 libgbm1
 
       - name: Run Clickyleaks Dynamic Explorer
         run: python clickyleaks_dynamic_explorer.py
