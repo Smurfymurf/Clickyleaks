@@ -1,4 +1,7 @@
-import requests, re, os
+import os
+import re
+import requests
+import pandas as pd
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
@@ -9,7 +12,6 @@ from kagglehub import KaggleDatasetAdapter
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-KAGGLE_FILE = "US_youtube_trending_data.csv"  # Set your preferred country file
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -30,6 +32,18 @@ WELL_KNOWN_DOMAINS = {
     "weebly.com", "behance.net", "dribbble.com", "skype.com", "opera.com",
     "twitch.tv", "stackoverflow.com", "stackoverflow.blog"
 }
+
+def normalize_domain(domain: str) -> str:
+    try:
+        parsed = urlparse(domain)
+        host = parsed.netloc or parsed.path
+        host = host.replace("www.", "").lower().strip()
+        return host
+    except:
+        return domain.lower()
+
+def extract_links(text):
+    return re.findall(r'(https?://[^\s)]+)', text or "")
 
 def already_scanned(video_id):
     result = supabase.table("Clickyleaks_KaggleChecked").select("id").eq("video_id", video_id).execute()
@@ -52,35 +66,20 @@ def send_discord_alert(domain, video_url):
     if not DISCORD_WEBHOOK_URL:
         return
     message = {
-        "content": f"🔥 Available domain found: `{domain}`\n🔗 Video: {video_url}"
+        "content": f"\ud83d\udd25 Available domain found: `{domain}`\n\ud83d\udd17 Video: {video_url}"
     }
     try:
         requests.post(DISCORD_WEBHOOK_URL, json=message, timeout=5)
     except:
         pass
 
-def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text)
-
-def normalize_domain(domain: str) -> str:
-    try:
-        parsed = urlparse(domain)
-        host = parsed.netloc or parsed.path
-        host = host.replace("www.", "").lower().strip()
-        return host
-    except:
-        return domain.lower()
-
-def process_video(video):
-    video_id = video.get("video_id")
-    if not video_id or already_scanned(video_id):
+def process_video(row):
+    video_id = row.get("video_id") or row.get("video_id_yt")
+    description = row.get("description", "")
+    if not video_id or not description or already_scanned(video_id):
         return
 
     mark_video_scanned(video_id)
-    description = video.get("description", "")
-    if not description or "http" not in description:
-        return
-
     links = extract_links(description)
 
     for link in links:
@@ -89,16 +88,16 @@ def process_video(video):
             if not domain or len(domain.split(".")) < 2:
                 continue
             if domain in WELL_KNOWN_DOMAINS:
-                print(f"🚫 Skipping well-known domain: {domain}")
+                print(f"\ud83d\udeab Skipping well-known domain: {domain}")
                 continue
         except Exception as e:
-            print(f"⚠️ Skipping invalid URL: {link} ({e})")
+            print(f"\u26a0\ufe0f Skipping invalid URL: {link} ({e})")
             continue
 
-        is_available = is_domain_available(domain)
-        print(f"🔍 Logging domain: {domain} | Available: {is_available}")
+        available = is_domain_available(domain)
+        print(f"\ud83d\udd0d Logging domain: {domain} | Available: {available}")
 
-        if is_available:
+        if available:
             record = {
                 "domain": domain,
                 "full_url": link,
@@ -114,24 +113,16 @@ def process_video(video):
             break
 
 def main():
-    print("🚀 Loading YouTube Trending dataset from Kaggle...")
-
+    print("\ud83d\ude80 Loading YouTube Trending dataset from Kaggle...")
     df = kagglehub.load_dataset(
         KaggleDatasetAdapter.PANDAS,
         "canerkonuk/youtube-trending-videos-global",
-        KAGGLE_FILE
+        "US_youtube_trending_data.csv"
     )
-
-    print(f"📊 Loaded {len(df)} rows. Scanning for links...")
+    print(f"\u2705 Loaded {len(df)} rows")
 
     for _, row in df.iterrows():
-        video = {
-            "video_id": row.get("video_id"),
-            "description": row.get("description", "")
-        }
-        process_video(video)
-
-    print("✅ Finished scanning trending dataset.")
+        process_video(row)
 
 if __name__ == "__main__":
     main()
