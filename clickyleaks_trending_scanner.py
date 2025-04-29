@@ -1,10 +1,7 @@
-# Place this in a file called clickyleaks_trending_scanner.py
-
-import os, re, requests
+import requests, re, os
 from urllib.parse import urlparse
 from datetime import datetime
 from supabase import create_client, Client
-import pandas as pd
 import kagglehub
 from kagglehub import KaggleDatasetAdapter
 
@@ -12,6 +9,7 @@ from kagglehub import KaggleDatasetAdapter
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+KAGGLE_FILE = "US_youtube_trending_data.csv"  # Set your preferred country file
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -22,20 +20,16 @@ WELL_KNOWN_DOMAINS = {
     "cnn.com", "bbc.com", "dropbox.com", "airbnb.com", "salesforce.com",
     "tiktok.com", "ebay.com", "zoom.us", "whatsapp.com", "nytimes.com",
     "oracle.com", "bing.com", "slack.com", "notion.so", "wordpress.com",
-    "vercel.app", "netlify.app", "figma.com", "medium.com", "shopify.com"
+    "vercel.app", "netlify.app", "figma.com", "medium.com", "shopify.com",
+    "yahoo.com", "pinterest.com", "imdb.com", "quora.com", "adobe.com",
+    "cloudflare.com", "soundcloud.com", "coursera.org", "kickstarter.com",
+    "mozilla.org", "forbes.com", "theguardian.com", "weather.com", "espn.com",
+    "msn.com", "okta.com", "bitbucket.org", "vimeo.com", "unsplash.com",
+    "canva.com", "zoom.com", "atlassian.com", "ycombinator.com", "stripe.com",
+    "zendesk.com", "hotstar.com", "reuters.com", "nationalgeographic.com",
+    "weebly.com", "behance.net", "dribbble.com", "skype.com", "opera.com",
+    "twitch.tv", "stackoverflow.com", "stackoverflow.blog"
 }
-
-def extract_links(text):
-    return re.findall(r'(https?://[^\s)]+)', text)
-
-def normalize_domain(domain: str) -> str:
-    try:
-        parsed = urlparse(domain)
-        host = parsed.netloc or parsed.path
-        host = host.replace("www.", "").lower().strip()
-        return host
-    except:
-        return domain.lower()
 
 def already_scanned(video_id):
     result = supabase.table("Clickyleaks_KaggleChecked").select("id").eq("video_id", video_id).execute()
@@ -65,24 +59,46 @@ def send_discord_alert(domain, video_url):
     except:
         pass
 
+def extract_links(text):
+    return re.findall(r'(https?://[^\s)]+)', text)
+
+def normalize_domain(domain: str) -> str:
+    try:
+        parsed = urlparse(domain)
+        host = parsed.netloc or parsed.path
+        host = host.replace("www.", "").lower().strip()
+        return host
+    except:
+        return domain.lower()
+
 def process_video(video):
-    video_id = str(video.get("video_id"))
+    video_id = video.get("video_id")
     if not video_id or already_scanned(video_id):
         return
-    mark_video_scanned(video_id)
 
-    description = str(video.get("description", ""))
+    mark_video_scanned(video_id)
+    description = video.get("description", "")
+    if not description or "http" not in description:
+        return
+
     links = extract_links(description)
 
     for link in links:
-        domain = normalize_domain(link)
-        if not domain or len(domain.split(".")) < 2 or domain in WELL_KNOWN_DOMAINS:
-            print(f"🚫 Skipping domain: {domain}")
+        try:
+            domain = normalize_domain(link)
+            if not domain or len(domain.split(".")) < 2:
+                continue
+            if domain in WELL_KNOWN_DOMAINS:
+                print(f"🚫 Skipping well-known domain: {domain}")
+                continue
+        except Exception as e:
+            print(f"⚠️ Skipping invalid URL: {link} ({e})")
             continue
 
-        available = is_domain_available(domain)
-        print(f"🔍 Domain: {domain} | Available: {available}")
-        if available:
+        is_available = is_domain_available(domain)
+        print(f"🔍 Logging domain: {domain} | Available: {is_available}")
+
+        if is_available:
             record = {
                 "domain": domain,
                 "full_url": link,
@@ -99,17 +115,23 @@ def process_video(video):
 
 def main():
     print("🚀 Loading YouTube Trending dataset from Kaggle...")
+
     df = kagglehub.load_dataset(
         KaggleDatasetAdapter.PANDAS,
         "canerkonuk/youtube-trending-videos-global",
-        ""
+        KAGGLE_FILE
     )
 
-    for _, row in df.iterrows():
-        if "http" in str(row.get("description", "")).lower():
-            process_video(row)
+    print(f"📊 Loaded {len(df)} rows. Scanning for links...")
 
-    print("✅ Done scanning trending videos.")
+    for _, row in df.iterrows():
+        video = {
+            "video_id": row.get("video_id"),
+            "description": row.get("description", "")
+        }
+        process_video(video)
+
+    print("✅ Finished scanning trending dataset.")
 
 if __name__ == "__main__":
     main()
