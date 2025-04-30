@@ -51,32 +51,37 @@ def get_current_chunk_progress():
 
 def update_chunk_progress(chunk_index, video_index):
     supabase.table("Clickyleaks_SeedProgress").upsert({
-        "id": 1,
         "chunk_index": chunk_index,
         "video_index": video_index
-    }).execute()
+    }, on_conflict=["chunk_index"]).execute()
 
 def mark_video_scanned(video_id):
     supabase.table("Clickyleaks_DynamicChecked").upsert({
         "video_id": video_id
-    }).execute()
+    }, on_conflict=["video_id"]).execute()
 
 def already_scanned(video_id):
     res = supabase.table("Clickyleaks_DynamicChecked").select("id").eq("video_id", video_id).execute()
     return bool(res.data)
 
-def log_potential_domain(domain, video_id, views):
+def log_potential_domain(domain, video_id, views, available):
     supabase.table("Clickyleaks").insert({
         "domain": domain,
         "source_video_id": video_id,
         "views": views,
-        "available": True,
+        "available": available,
         "verified": False
     }).execute()
 
 def send_discord_notification(domain, video_id, views):
     message = {
         "content": f"**New Potential Domain Found!**\n\nDomain: `{domain}`\nSource Video: https://youtube.com/watch?v={video_id}\nViews: {views:,}"
+    }
+    requests.post(DISCORD_WEBHOOK_URL, json=message)
+
+def send_discord_summary(processed, found):
+    message = {
+        "content": f"**Clickyleaks Run Complete**\n\nRelated videos processed: `{processed}`\nPotential domains found: `{found}`"
     }
     requests.post(DISCORD_WEBHOOK_URL, json=message)
 
@@ -132,9 +137,11 @@ async def process_video(page, video_id, views):
     found = False
     for domain in extract_domains_from_text(description):
         if is_expired_soft(domain):
-            log_potential_domain(domain, video_id, views)
+            log_potential_domain(domain, video_id, views, available=True)
             send_discord_notification(domain, video_id, views)
-            found = True
+        else:
+            log_potential_domain(domain, video_id, views, available=False)
+        found = True
     return found
 
 async def main():
@@ -154,12 +161,14 @@ async def main():
             start_video = chunk[i]
             start_video_id = start_video["_id"]
             print(f"🌱 Seed: {start_video_id}")
+            mark_video_scanned(start_video_id)
 
             related_ids = await get_related_videos(page, start_video_id, VIDEOS_PER_RUN)
             if not related_ids:
                 continue
 
             checked = 0
+            found_domains = 0
             for video_id in related_ids:
                 if checked >= VIDEOS_PER_RUN:
                     break
@@ -171,12 +180,15 @@ async def main():
                         published = datetime.strptime(published_date, "%Y%m%d")
                         age = (datetime.utcnow() - published).days
                         if MIN_AGE_DAYS <= age <= MAX_AGE_DAYS:
-                            await process_video(page, video_id, views)
+                            success = await process_video(page, video_id, views)
+                            if success:
+                                found_domains += 1
                             checked += 1
                 except:
                     continue
 
             update_chunk_progress(chunk_index, i + 1)
+            send_discord_summary(checked, found_domains)
             break
 
         await browser.close()
