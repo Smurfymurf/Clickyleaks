@@ -75,7 +75,7 @@ def main():
 
     # Load video IDs already scanned
     existing_ids = set()
-    checked_resp = supabase.table("Clickyleaks_Checked").select("video_id").execute()
+    checked_resp = supabase.table("clickyleaks_checked").select("video_id").execute()
     if checked_resp.data:
         existing_ids = {row["video_id"] for row in checked_resp.data}
 
@@ -118,7 +118,7 @@ def main():
                             break
 
                 # Track video as scanned
-                supabase.table("Clickyleaks_Checked").insert({
+                supabase.table("clickyleaks_checked").insert({
                     "video_id": video_id,
                     "scanned_at": datetime.utcnow().isoformat()
                 }).execute()
