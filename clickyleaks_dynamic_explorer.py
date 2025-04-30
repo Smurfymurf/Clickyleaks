@@ -23,9 +23,22 @@ MAX_AGE_DAYS = 365 * 7
 MIN_VIEW_COUNT = 20000
 
 WELL_KNOWN_DOMAINS = [
-    # (same list as before – truncated here for brevity)
     "google.com", "youtube.com", "facebook.com", "twitter.com", "instagram.com", "linkedin.com",
-    "cointelegraph.com"
+    "wikipedia.org", "amazon.com", "apple.com", "microsoft.com", "netflix.com", "yahoo.com",
+    "reddit.com", "bing.com", "whatsapp.com", "office.com", "live.com", "zoom.us", "pinterest.com",
+    "ebay.com", "tiktok.com", "dropbox.com", "adobe.com", "spotify.com", "wordpress.com", "paypal.com",
+    "imdb.com", "cnn.com", "bbc.com", "quora.com", "tumblr.com", "roblox.com", "stackexchange.com",
+    "stack overflow.com", "etsy.com", "weebly.com", "blogger.com", "telegram.org", "kickstarter.com",
+    "fiverr.com", "canva.com", "coursera.org", "udemy.com", "codepen.io", "producthunt.com",
+    "github.com", "gitlab.com", "bitbucket.org", "unsplash.com", "airbnb.com", "booking.com",
+    "tripadvisor.com", "indeed.com", "glassdoor.com", "zillow.com", "craigslist.org", "vimeo.com",
+    "archive.org", "forbes.com", "bloomberg.com", "nytimes.com", "npr.org", "huffpost.com", "msn.com",
+    "foxnews.com", "nbcnews.com", "cnbc.com", "marketwatch.com", "wsj.com", "weather.com", "accuweather.com",
+    "ycombinator.com", "medium.com", "notion.so", "slack.com", "trello.com", "asana.com", "salesforce.com",
+    "oracle.com", "ibm.com", "intuit.com", "quickbooks.com", "mailchimp.com", "getresponse.com",
+    "aweber.com", "convertkit.com", "discord.com", "x.com", "protonmail.com", "icloud.com", "icloud.net",
+    "duckduckgo.com", "opera.com", "mozilla.org", "brave.com", "coinbase.com", "binance.com", "opensea.io",
+    "etherscan.io", "polygonscan.com", "chainlink.com", "coindesk.com", "cointelegraph.com"
 ]
 
 # --- Supabase helpers ---
@@ -199,8 +212,13 @@ async def main():
                             continue
 
                     update_chunk_progress(chunk_index, i + 1)
-                    send_discord_summary(checked, found_domains)
-                    return  # ✅ Done with this run
+
+                    if checked > 0:
+                        send_discord_summary(checked, found_domains)
+                        await browser.close()
+                        return  # ✅ Done with this run
+                    else:
+                        print(f"⚠️ No valid related videos for seed {start_video_id}. Trying next seed...")
 
                 except Exception as e:
                     print(f"❌ Error with seed {start_video_id}: {e}")
@@ -208,7 +226,7 @@ async def main():
                     continue
 
             await browser.close()
-            return
+            return  # entire chunk exhausted
 
 if __name__ == "__main__":
     asyncio.run(main())
