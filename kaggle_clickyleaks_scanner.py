@@ -1,121 +1,135 @@
+from datetime import datetime
 from pathlib import Path
 import os
-import zipfile
 import random
+import re
+import zipfile
 import pandas as pd
 import requests
-import re
-import time
-from supabase import create_client
+from supabase import create_client, Client
 from urllib.parse import urlparse
 from dotenv import load_dotenv
-from datetime import datetime
 
-# Load environment variables
+# Load .env if running locally
 load_dotenv()
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-KAGGLE_USERNAME = os.getenv("KAGGLE_USERNAME")
-KAGGLE_KEY = os.getenv("KAGGLE_KEY")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+KAGGLE_USERNAME = os.environ.get("KAGGLE_USERNAME")
+KAGGLE_KEY = os.environ.get("KAGGLE_KEY")
 
-# Well-known domains to skip
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+KAGGLE_SOURCES = [
+    {
+        "owner_slug": "asaniczka",
+        "dataset_slug": "trending-youtube-videos-113-countries",
+        "file_path": "data/yt_trending.csv"
+    },
+    {
+        "owner_slug": "pyuser11",
+        "dataset_slug": "youtube-trending-videos-updated-daily",
+        "file_path": "yt_trending_videos.csv"
+    },
+    {
+        "owner_slug": "canerkonuk",
+        "dataset_slug": "youtube-trending-videos-global",
+        "file_path": "US_youtube_trending_data.csv"
+    },
+    {
+        "owner_slug": "sebastianbesinski",
+        "dataset_slug": "youtube-trending-videos-2025-updated-daily",
+        "file_path": "yt_trending.csv"
+    }
+]
+
 WELL_KNOWN_DOMAINS = {
     "youtube.com", "youtu.be", "facebook.com", "twitter.com", "instagram.com",
-    "linkedin.com", "google.com", "apple.com", "microsoft.com", "amazon.com",
-    "paypal.com", "bit.ly", "discord.com", "reddit.com", "tiktok.com", "openai.com"
+    "linkedin.com", "tiktok.com", "reddit.com", "discord.com", "google.com",
+    "apple.com", "microsoft.com", "amazon.com", "netflix.com", "paypal.com",
+    "github.com", "bitly.com", "tinyurl.com", "snapchat.com", "spotify.com"
 }
 
-# Datasets and known CSV filenames
-DATASETS = {
-    "asaniczka/trending-youtube-videos-113-countries": ["trending_youtube_data.csv"],
-    "pyuser11/youtube-trending-videos-updated-daily": ["yt_trending_videos.csv"],
-    "canerkonuk/youtube-trending-videos-global": ["youtube_trending_data.csv"],
-    "sebastianbesinski/youtube-trending-videos-2025-updated-daily": ["youtube_trending_data_2025.csv"]
-}
+def notify_discord(message: str):
+    if DISCORD_WEBHOOK_URL:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
 
-def soft_domain_check(domain):
+def soft_check_expired(domain: str) -> bool:
     try:
-        res = requests.get("http://" + domain, timeout=5)
-        return False if res.status_code < 500 else True
+        resp = requests.head("http://" + domain, timeout=5)
+        return resp.status_code in [404, 410]
     except Exception:
-        return True
+        return True  # Treat as potentially expired if unreachable
 
-def extract_links(description):
-    return re.findall(r'(https?://[^\s)"]+)', description)
+def extract_urls(description: str):
+    return re.findall(r'(https?://[^\s]+)', str(description))
 
-def clean_url(url):
-    try:
-        parsed = urlparse(url)
-        host = parsed.netloc.replace("www.", "").strip()
-        return host.lower()
-    except:
-        return None
-
-def load_csv(filepath):
-    return pd.read_csv(filepath)
-
-def log_discord_message(domain, video_id):
-    content = f"**Available Domain Found:** `{domain}`\nFrom Video: [Watch](https://youtube.com/watch?v={video_id})"
-    requests.post(DISCORD_WEBHOOK_URL, json={"content": content})
-
-def download_dataset(dataset_name):
-    os.makedirs("data", exist_ok=True)
-    print(f"📦 Downloading dataset: {dataset_name}")
-    os.system(f'kaggle datasets download -d {dataset_name} -p data --unzip')
-    time.sleep(1)
+def extract_domain(url: str) -> str:
+    parsed = urlparse(url)
+    return parsed.netloc.lower().replace("www.", "")
 
 def main():
-    dataset = random.choice(list(DATASETS.keys()))
-    download_dataset(dataset)
+    source = random.choice(KAGGLE_SOURCES)
+    dataset_ref = f"{source['owner_slug']}/{source['dataset_slug']}"
+    file_path = source["file_path"]
 
-    csv_files = [Path("data") / name for name in DATASETS[dataset]]
-    if not csv_files:
-        print("❌ No CSV files found.")
-        return
+    print(f"📦 Downloading dataset: {dataset_ref}")
+    notify_discord(f"Clickyleaks scanning `{dataset_ref}`...")
 
-    # Load previously scanned IDs
-    checked_resp = supabase.table("Clickyleaks_Checked").select("video_id").execute()
-    already_checked = {row["video_id"] for row in checked_resp.data} if checked_resp.data else set()
+    os.environ["KAGGLE_USERNAME"] = KAGGLE_USERNAME
+    os.environ["KAGGLE_KEY"] = KAGGLE_KEY
+    os.system(f"kaggle datasets download -d {dataset_ref} -p data --unzip")
 
-    found_count = 0
-    for csv_path in csv_files:
-        df = load_csv(csv_path)
+    df = pd.read_csv(f"data/{file_path}")
+    df = df.dropna(subset=["video_id", "description"]).drop_duplicates("video_id")
+    df["video_id"] = df["video_id"].astype(str)
 
-        for _, row in df.iterrows():
-            video_id = row.get("video_id") or row.get("videoId")
-            description = row.get("description")
+    existing_ids_resp = supabase.table("clickyleaks_checked").select("video_id").execute()
+    already_checked = {item['video_id'] for item in existing_ids_resp.data}
 
-            if not video_id or video_id in already_checked or not isinstance(description, str):
+    new_domains = []
+    scanned = 0
+
+    for _, row in df.sort_values("publishedAt" if "publishedAt" in df.columns else df.columns[0]).iterrows():
+        video_id = row["video_id"]
+        if video_id in already_checked:
+            continue
+
+        urls = extract_urls(row.get("description", ""))
+        urls = [url for url in urls if extract_domain(url) not in WELL_KNOWN_DOMAINS]
+
+        for url in urls:
+            domain = extract_domain(url)
+            if not domain:
                 continue
+            if soft_check_expired(domain):
+                print(f"Found candidate: {domain}")
+                new_domains.append({
+                    "domain": domain,
+                    "source": "YouTube",
+                    "video_id": video_id,
+                    "available": True,
+                    "verified": False,
+                    "discovered_at": datetime.utcnow().isoformat()
+                })
+                if len(new_domains) >= 5:
+                    break
 
-            # Mark video as scanned
-            supabase.table("Clickyleaks_Checked").insert({
-                "video_id": video_id,
-                "scanned_at": datetime.utcnow().isoformat()
-            }).execute()
-            already_checked.add(video_id)
+        supabase.table("clickyleaks_checked").insert({
+            "video_id": video_id,
+            "scanned_at": datetime.utcnow().isoformat()
+        }).execute()
 
-            for link in extract_links(description):
-                domain = clean_url(link)
-                if not domain or domain in WELL_KNOWN_DOMAINS:
-                    continue
+        scanned += 1
+        if len(new_domains) >= 5 or scanned >= 500:
+            break
 
-                if soft_domain_check(domain):
-                    supabase.table("Clickyleaks").insert({
-                        "domain": domain,
-                        "source": "kaggle",
-                        "video_id": video_id,
-                        "available": True,
-                        "verified": False,
-                        "created_at": datetime.utcnow().isoformat()
-                    }).execute()
-                    log_discord_message(domain, video_id)
-                    found_count += 1
-                    if found_count >= 5:
-                        return
+    if new_domains:
+        supabase.table("clickyleaks").insert(new_domains).execute()
+        notify_discord(f"Clickyleaks discovered `{len(new_domains)}` potential domains!")
+    else:
+        notify_discord("Clickyleaks scan complete — no new domains found.")
 
 if __name__ == "__main__":
     main()
