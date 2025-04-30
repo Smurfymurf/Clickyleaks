@@ -19,6 +19,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Constants
 MAX_VIDEOS = 500
 MAX_AVAILABLE = 5
+
+# Verified CSV paths based on actual dataset content
 DATASETS = [
     {
         "url": "asaniczka/trending-youtube-videos-113-countries",
@@ -26,7 +28,7 @@ DATASETS = [
     },
     {
         "url": "pyuser11/youtube-trending-videos-updated-daily",
-        "path": "yt_trending_videos.csv"
+        "path": "TrendingData.csv"  # Corrected path
     },
     {
         "url": "canerkonuk/youtube-trending-videos-global",
