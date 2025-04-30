@@ -1,29 +1,34 @@
-name: Run Clickyleaks Kaggle Scanner
+name: Kaggle Clickyleaks Scanner
 
 on:
   schedule:
-    - cron: "0 8,16,23 * * *"  # 3x/day
+    - cron: '0 8,16,23 * * *'  # 3 runs per day (08:00, 16:00, 23:00 UTC)
   workflow_dispatch:
 
 jobs:
   scan:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repo
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
-          pip install pandas supabase requests
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install kaggle python-dotenv pandas supabase requests
 
-      - name: Run scanner
+      - name: Run Kaggle Clickyleaks Scanner
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
         run: python kaggle_clickyleaks_scanner.py
