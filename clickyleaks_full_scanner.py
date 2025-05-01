@@ -3,6 +3,7 @@ import re
 import json
 import time
 import requests
+import random
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 from supabase import create_client
@@ -21,13 +22,20 @@ MAX_RUNTIME_MINUTES = 45
 PROGRESS_TABLE = "clickyleaks_chunk_progress"
 CHECKED_TABLE = "clickyleaks_checked"
 MAIN_TABLE = "Clickyleaks"
-
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1361997081761546332/HoK_OtaHJNd_qXo7ucEwCeUCyWegV0GwDxdT6IcrbokbPcS6U9KF4Vo2fYhl1kOQaHqS"
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.3 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+os.makedirs("screenshots", exist_ok=True)
 
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
     WELL_KNOWN_DOMAINS = set(
-        tldextract.extract(line.strip().split(",")[0].lower()).registered_domain
+        tldextract.extract(line.strip().split(",")[0].lower()).top_domain_under_public_suffix
         for line in f if line.strip()
     )
 print(f"✅ Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
@@ -58,7 +66,7 @@ def extract_links_from_description(description):
 
 def extract_root_domain(url):
     ext = tldextract.extract(url)
-    return ext.registered_domain
+    return ext.top_domain_under_public_suffix
 
 def soft_check_domain_availability(domain):
     try:
@@ -68,7 +76,6 @@ def soft_check_domain_availability(domain):
         return True   # Domain unreachable → maybe expired
 
 def extract_view_count(page):
-    # Try primary selector
     try:
         view_span = page.locator('span.view-count').first
         view_text = view_span.inner_text()
@@ -78,7 +85,6 @@ def extract_view_count(page):
     except:
         pass
 
-    # Fallback to localized body patterns
     try:
         text = page.inner_text("body")
         patterns = [r"([\d,\.]+)\sviews", r"([\d,\.]+)\svisualizzazioni", r"([\d,\.]+)\sAufrufe"]
@@ -96,14 +102,14 @@ def check_video_live(page, video_id):
         page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=15000)
         page.wait_for_timeout(3000)
 
-        # Check for real YouTube error component
         if page.locator("ytd-player-error-message-renderer").is_visible():
-            print(f"❌ YouTube shows video error renderer for: {video_id}")
+            print(f"❌ YouTube shows error renderer for: {video_id}")
             return None, None, None
 
         title = page.title().replace(" - YouTube", "").strip()
         if not title or title.lower() == "youtube":
-            print(f"⚠️ No valid title found — possible cookie wall, adblock, or redirect issue.")
+            print(f"⚠️ No valid title — possible block or cookie wall. Saving screenshot.")
+            page.screenshot(path=f"screenshots/fail_{video_id}.png")
             return None, None, None
 
         view_count = extract_view_count(page)
@@ -116,6 +122,7 @@ def check_video_live(page, video_id):
         return description, title, view_count
     except Exception as e:
         print(f"⚠️ Error checking video {video_id}: {e}")
+        page.screenshot(path=f"screenshots/exception_{video_id}.png")
         return None, None, None
 
 def send_discord_alert(stats):
@@ -168,7 +175,13 @@ def main():
 
     with sync_playwright() as p:
         browser = p.firefox.launch(headless=True)
-        page = browser.new_page()
+
+        user_agent = random.choice(USER_AGENTS)
+        page = browser.new_page(user_agent=user_agent)
+        page.set_extra_http_headers({
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Fetch-Mode": "navigate"
+        })
 
         for i in range(video_index, total_videos):
             video_id = videos[i]
@@ -242,6 +255,10 @@ def main():
 
             supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
             save_progress(chunk_name, i + 1)
+
+            delay_ms = random.randint(3000, 23000)
+            print(f"🕒 Waiting {delay_ms}ms before next video...")
+            page.wait_for_timeout(delay_ms)
 
         save_progress(chunk_name, total_videos, done=True)
         print(f"✅ Finished {chunk_name}.")
