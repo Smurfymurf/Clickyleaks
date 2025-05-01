@@ -107,8 +107,7 @@ def main():
         page = browser.new_page()
 
         for i in range(video_index, total_videos):
-            video = videos[i]
-            video_id = video.get("id")
+            video_id = videos[i]  # ✅ FIXED: video_id is a string
             print(f"🔍 Checking video: {video_id}")
 
             if already_checked(video_id):
