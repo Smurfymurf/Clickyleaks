@@ -8,11 +8,22 @@ from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 from supabase import create_client
 import tldextract
+from dotenv import load_dotenv
+
+# === Load .env file ===
+load_dotenv()
 
 # === ENV and config ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
+DOMAINR_API_KEY = os.getenv("DOMAINR_API_KEY")
+GODADDY_API_KEY = os.getenv("GODADDY_API_KEY")
+GODADDY_API_SECRET = os.getenv("GODADDY_API_SECRET")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+
 
 CHUNK_DIR = "data/youtube8m_chunks"
 WELL_KNOWN_PATH = "data/well_known_domains.csv"
