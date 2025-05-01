@@ -65,7 +65,7 @@ def already_checked(video_id):
     return len(result.data) > 0
 
 def extract_links_from_description(text):
-    return re.findall(r"https?://[^\s)>"]+", text)
+    return re.findall(r"https?://[^\s)>\"]+", text)
 
 def extract_root_domain(url):
     ext = tldextract.extract(url)
