@@ -22,6 +22,8 @@ PROGRESS_TABLE = "clickyleaks_chunk_progress"
 CHECKED_TABLE = "clickyleaks_checked"
 MAIN_TABLE = "Clickyleaks"
 
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1361997081761546332/HoK_OtaHJNd_qXo7ucEwCeUCyWegV0GwDxdT6IcrbokbPcS6U9KF4Vo2fYhl1kOQaHqS"
+
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
     WELL_KNOWN_DOMAINS = set(
@@ -58,10 +60,6 @@ def extract_root_domain(url):
     ext = tldextract.extract(url)
     return ext.registered_domain
 
-def is_valid_domain(link):
-    root = extract_root_domain(link)
-    return root and root not in WELL_KNOWN_DOMAINS
-
 def soft_check_domain_availability(domain):
     try:
         requests.get(f"http://{domain}", timeout=5)
@@ -84,6 +82,26 @@ def check_video_live(page, video_id):
     except Exception:
         return None, None, None
 
+def send_discord_alert(stats):
+    domain_list = "\n".join(f"- {d}" for d in stats["new_domains"]) if stats["new_domains"] else "_None_"
+    message = {
+        "content": (
+            f"🔔 **Clickyleaks Scan Complete**\n"
+            f"📦 Chunk: `{stats['chunk']}`\n"
+            f"🎥 Videos scanned: **{stats['videos_scanned']}**\n"
+            f"🔸 Well-known domains skipped: **{stats['well_known_skipped']}**\n"
+            f"⛔️ Active domains skipped: **{stats['resolves_skipped']}**\n"
+            f"ℹ️ Videos with no links: **{stats['no_links']}**\n"
+            f"❌ Unavailable videos: **{stats['unavailable']}**\n"
+            f"✅ Potential available domains found: **{len(stats['new_domains'])}**\n{domain_list}"
+        )
+    }
+    try:
+        requests.post(DISCORD_WEBHOOK, json=message, timeout=10)
+        print("📣 Discord alert sent.")
+    except Exception as e:
+        print(f"⚠️ Failed to send Discord alert: {e}")
+
 # === Main ===
 
 def main():
@@ -99,6 +117,17 @@ def main():
     with open(chunk_path, "r") as f:
         videos = json.load(f)
 
+    # === Tracking Stats ===
+    stats = {
+        "chunk": chunk_name,
+        "videos_scanned": 0,
+        "well_known_skipped": 0,
+        "resolves_skipped": 0,
+        "no_links": 0,
+        "unavailable": 0,
+        "new_domains": []
+    }
+
     total_videos = len(videos)
     domains_found = 0
 
@@ -107,8 +136,9 @@ def main():
         page = browser.new_page()
 
         for i in range(video_index, total_videos):
-            video_id = videos[i]  # ✅ FIXED: video_id is a string
+            video_id = videos[i]
             print(f"🔍 Checking video: {video_id}")
+            stats["videos_scanned"] += 1
 
             if already_checked(video_id):
                 print(f"⏩ Already checked: {video_id}")
@@ -117,49 +147,70 @@ def main():
             if datetime.utcnow() - start_time > timedelta(minutes=MAX_RUNTIME_MINUTES):
                 save_progress(chunk_name, i, done=False)
                 print("⏱️ Runtime cap hit — stopping.")
+                send_discord_alert(stats)
                 return
 
             if domains_found >= MAX_DOMAINS:
                 save_progress(chunk_name, i, done=False)
                 print(f"✅ Hit domain cap ({MAX_DOMAINS}) — stopping.")
+                send_discord_alert(stats)
                 return
 
             body, title, views = check_video_live(page, video_id)
             if not body:
+                print(f"❌ Video unavailable or removed: {video_id}")
+                stats["unavailable"] += 1
                 supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
                 save_progress(chunk_name, i + 1)
                 continue
 
             links = extract_links_from_description(body)
-            for link in links:
-                root_domain = extract_root_domain(link)
-                if not root_domain or root_domain in WELL_KNOWN_DOMAINS:
-                    continue
-                if not soft_check_domain_availability(root_domain):
-                    continue
+            if not links:
+                print(f"ℹ️ No links found in description for: {video_id}")
+                stats["no_links"] += 1
+            else:
+                found_valid = False
+                for link in links:
+                    root_domain = extract_root_domain(link)
+                    if not root_domain:
+                        continue
+                    if root_domain in WELL_KNOWN_DOMAINS:
+                        print(f"🔸 Skipped well-known domain: {root_domain}")
+                        stats["well_known_skipped"] += 1
+                        continue
+                    if not soft_check_domain_availability(root_domain):
+                        print(f"🔸 Skipped active domain (resolves): {root_domain}")
+                        stats["resolves_skipped"] += 1
+                        continue
 
-                try:
-                    supabase.table(MAIN_TABLE).upsert({
-                        "domain": root_domain,
-                        "full_url": link,
-                        "video_title": title,
-                        "video_url": f"https://www.youtube.com/watch?v={video_id}",
-                        "view_count": views,
-                        "video_id": video_id,
-                        "verified": False,
-                        "is_available": True,
-                        "discovered_at": datetime.utcnow().isoformat()
-                    }, on_conflict=["video_id", "domain"]).execute()
-                    domains_found += 1
-                    print(f"🌐 Domain added: {root_domain} from {video_id}")
-                except Exception as e:
-                    print(f"⚠️ Error inserting {root_domain}: {e}")
+                    try:
+                        supabase.table(MAIN_TABLE).upsert({
+                            "domain": root_domain,
+                            "full_url": link,
+                            "video_title": title,
+                            "video_url": f"https://www.youtube.com/watch?v={video_id}",
+                            "view_count": views,
+                            "video_id": video_id,
+                            "verified": False,
+                            "is_available": True,
+                            "discovered_at": datetime.utcnow().isoformat()
+                        }, on_conflict=["video_id", "domain"]).execute()
+                        domains_found += 1
+                        found_valid = True
+                        stats["new_domains"].append(root_domain)
+                        print(f"🌐 Domain added: {root_domain} from {video_id}")
+                    except Exception as e:
+                        print(f"⚠️ Error inserting {root_domain}: {e}")
+
+                if not found_valid:
+                    print(f"⚠️ Only well-known or unavailable domains found in: {video_id}")
 
             supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
             save_progress(chunk_name, i + 1)
 
         save_progress(chunk_name, total_videos, done=True)
         print(f"✅ Finished {chunk_name}.")
+        send_discord_alert(stats)
 
 if __name__ == "__main__":
     main()
