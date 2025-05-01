@@ -67,6 +67,30 @@ def soft_check_domain_availability(domain):
     except:
         return True   # Domain unreachable → maybe expired
 
+def extract_view_count(page):
+    # Try primary selector
+    try:
+        view_span = page.locator('span.view-count').first
+        view_text = view_span.inner_text()
+        match = re.search(r"([\d,]+)", view_text)
+        if match:
+            return int(match.group(1).replace(",", ""))
+    except:
+        pass
+
+    # Fallback to localized body patterns
+    try:
+        text = page.inner_text("body")
+        patterns = [r"([\d,\.]+)\sviews", r"([\d,\.]+)\svisualizzazioni", r"([\d,\.]+)\sAufrufe"]
+        for pat in patterns:
+            match = re.search(pat, text, re.IGNORECASE)
+            if match:
+                return int(match.group(1).replace(",", "").replace(".", ""))
+    except:
+        pass
+
+    return None
+
 def check_video_live(page, video_id):
     try:
         page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=10000)
@@ -74,11 +98,16 @@ def check_video_live(page, video_id):
         content = page.content()
         if "Video unavailable" in content:
             return None, None, None
-        title = page.title()
-        view_text = page.inner_text("body")
-        match = re.search(r"([\d,]+)\sviews", view_text)
-        view_count = int(match.group(1).replace(",", "")) if match else None
-        return page.inner_text("body"), title, view_count
+
+        title = page.title().replace(" - YouTube", "").strip()
+        view_count = extract_view_count(page)
+
+        try:
+            description = page.inner_text("#description")
+        except:
+            description = ""
+
+        return description, title, view_count
     except Exception:
         return None, None, None
 
@@ -117,7 +146,6 @@ def main():
     with open(chunk_path, "r") as f:
         videos = json.load(f)
 
-    # === Tracking Stats ===
     stats = {
         "chunk": chunk_name,
         "videos_scanned": 0,
