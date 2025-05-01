@@ -2,7 +2,7 @@ name: Clickyleaks Full Scanner
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # ⏰ Runs every 4 hours
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 jobs:
@@ -27,28 +27,25 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cache pip dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install system dependencies for Playwright
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
                                   libxss1 libxshmfence1 libxrandr2 libgbm1 \
-                                  libgtk-3-0 xvfb libasound2t64
+                                  libgtk-3-0 xvfb libasound2t64 unzip wget
+
+      - name: Install ChromeDriver 135 (to match runner's browser)
+        run: |
+          wget https://storage.googleapis.com/chrome-for-testing-public/135.0.7049.114/linux64/chromedriver-linux64.zip
+          unzip chromedriver-linux64.zip
+          sudo mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+          sudo chmod +x /usr/local/bin/chromedriver
 
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
           pip install undetected-chromedriver
-          pip install playwright
-          playwright install chromium
 
       - name: Run Clickyleaks Full Scanner
         run: xvfb-run python clickyleaks_full_scanner.py
