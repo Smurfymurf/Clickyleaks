@@ -153,7 +153,11 @@ def main():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
 
-    driver = uc.Chrome(options=options, headless=True)
+    driver = uc.Chrome(
+    options=options,
+    headless=True,
+    browser_executable_path="/opt/chrome/chrome"
+)
     start_time = datetime.utcnow()
     domains_found = 0
 
