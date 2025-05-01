@@ -1,14 +1,11 @@
 import os
 import json
 import re
-import time
 from datetime import datetime, timedelta
-from uuid import uuid4
-
 from supabase import create_client
 from playwright.sync_api import sync_playwright
 
-# Supabase env vars
+# Supabase connection
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -29,15 +26,15 @@ print(f"✅ Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
 def get_next_chunk():
     result = supabase.table(PROGRESS_TABLE).select("*").order("updated_at", desc=False).execute()
-    scanned_chunks = {row["chunk_name"]: row for row in result.data}
+    scanned = {row["chunk_name"]: row for row in result.data}
     
     for filename in sorted(os.listdir(CHUNK_DIR)):
         if not filename.endswith(".json"):
             continue
-        full_path = os.path.join(CHUNK_DIR, filename)
-        if filename not in scanned_chunks or not scanned_chunks[filename]["fully_scanned"]:
-            last_index = scanned_chunks[filename]["last_scanned_index"] if filename in scanned_chunks else 0
-            return filename, full_path, last_index
+        path = os.path.join(CHUNK_DIR, filename)
+        if filename not in scanned or not scanned[filename]["fully_scanned"]:
+            index = scanned[filename]["last_scanned_index"] if filename in scanned else 0
+            return filename, path, index
     return None, None, None
 
 def save_progress(chunk_name, index, fully_scanned=False):
@@ -60,7 +57,7 @@ def is_valid_domain(link):
         return domain not in WELL_KNOWN_DOMAINS
     return False
 
-def extract_links_from_description(description):
+def extract_links(description):
     return re.findall(r"https?://[^\s)>\"]+", description)
 
 def check_video_live(page, video_id):
@@ -89,27 +86,25 @@ def main():
     with open(chunk_path, "r") as f:
         videos = json.load(f)
 
-    total_videos = len(videos)
+    total = len(videos)
     domains_found = 0
 
     with sync_playwright() as p:
         browser = p.firefox.launch(headless=True)
         page = browser.new_page()
 
-        for i in range(start_index, total_videos):
-            video_id = videos[i].get("id")
+        for i in range(start_index, total):
+            video_id = videos[i]  # ←✅ FIXED: video_id is a string
             print(f"🔍 Checking video: {video_id}")
             if already_checked(video_id):
                 print(f"⏩ Already checked: {video_id}")
                 continue
 
-            # Runtime check
             if datetime.utcnow() - start_time > timedelta(minutes=MAX_RUNTIME_MINUTES):
-                print("⏱️ Runtime limit hit — pausing.")
+                print("⏱️ Runtime limit hit.")
                 save_progress(chunk_name, i, fully_scanned=False)
                 return
 
-            # Domain cap check
             if domains_found >= MAX_DOMAINS:
                 print("✅ Domain cap hit.")
                 save_progress(chunk_name, i, fully_scanned=False)
@@ -122,7 +117,7 @@ def main():
                 save_progress(chunk_name, i + 1)
                 continue
 
-            links = extract_links_from_description(body)
+            links = extract_links(body)
             new_domains = set()
 
             for link in links:
@@ -143,7 +138,7 @@ def main():
             supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
             save_progress(chunk_name, i + 1)
 
-    save_progress(chunk_name, total_videos, fully_scanned=True)
+    save_progress(chunk_name, total, fully_scanned=True)
     print(f"✅ Finished scanning: {chunk_name}")
 
 if __name__ == "__main__":
