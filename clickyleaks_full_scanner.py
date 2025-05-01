@@ -1,149 +1,125 @@
 import os
 import json
-import random
-import requests
-import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import create_client
-from urllib.parse import urlparse
-from pathlib import Path
 from playwright.sync_api import sync_playwright
-from dotenv import load_dotenv
+import re
 
-# Load environment variables
-load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-
-# Supabase client
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Constants
-VIDEO_CHUNK_DIR = Path("data/youtube8m_chunks")
-WELL_KNOWN_DOMAINS_CSV = Path("data/well_known_domains.csv")
-MAX_VIDEOS = 500
-MAX_DOMAINS = 10
+CHUNK_DIR = "Clickyleaks/data/youtube8m_chunks"
+MAX_DOMAINS = 5
+MAX_RUNTIME_MINUTES = 45
+PROGRESS_TABLE = "clickyleaks_chunk_progress"
+CHECKED_TABLE = "clickyleaks_checked"
+MAIN_TABLE = "Clickyleaks"
 
-# Load well-known domains
-def load_well_known_domains():
-    if WELL_KNOWN_DOMAINS_CSV.exists():
-        with open(WELL_KNOWN_DOMAINS_CSV, "r") as f:
-            return set([line.strip() for line in f if line.strip()])
-    return set()
+# Load well-known domains from local file
+with open("Clickyleaks/well_known_domains.csv", "r") as f:
+    WELL_KNOWN_DOMAINS = set(domain.strip() for domain in f if domain.strip())
 
-WELL_KNOWN_DOMAINS = load_well_known_domains()
-
-# Get already scanned video IDs
-def get_scanned_video_ids():
-    resp = supabase.table("clickyleaks_checked").select("video_id").execute()
+def get_current_chunk_and_index():
+    resp = supabase.table(PROGRESS_TABLE).select("*").execute()
     if resp.data:
-        return set(row["video_id"] for row in resp.data)
-    return set()
+        return resp.data[0]["chunk_number"], resp.data[0]["video_index"]
+    return 1, 0
 
-# Parse description for external links
-def extract_links_from_description(description):
-    return re.findall(r"https?://[\w./?=&%-]+", description or "")
+def save_progress(chunk_number, video_index):
+    supabase.table(PROGRESS_TABLE).upsert({"id": 1, "chunk_number": chunk_number, "video_index": video_index}).execute()
 
-# Get video description with fallback using Playwright
-def get_video_description(video_id):
-    try:
-        # First try YouTube oEmbed (lightweight)
-        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
-        r = requests.get(oembed_url, timeout=5)
-        if r.status_code == 200:
-            return ""
-    except:
-        pass
+def already_checked(video_id):
+    result = supabase.table(CHECKED_TABLE).select("video_id").eq("video_id", video_id).execute()
+    return len(result.data) > 0
 
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=15000)
-            time.sleep(2)
-            description = page.inner_text("#description")
-            browser.close()
-            return description
-    except:
-        return None
-
-# Check if domain might be expired (soft check)
-def is_potentially_expired(domain):
-    try:
-        r = requests.get("http://" + domain, timeout=5)
-        if r.status_code in [404, 410, 500]:
-            return True
-    except:
-        return True
+def is_valid_domain(link):
+    parsed = re.search(r"(https?://)?([A-Za-z0-9.-]+\.[A-Za-z]{2,})", link)
+    if parsed:
+        domain = parsed.group(2).lower()
+        return domain not in WELL_KNOWN_DOMAINS
     return False
 
-# Discord alert
-def send_discord_alert(message):
-    if DISCORD_WEBHOOK_URL:
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": message})
+def extract_links_from_description(description):
+    return re.findall(r"https?://[^\s)>\"]+", description)
 
-# Main process
+def check_video_live(page, video_id):
+    try:
+        page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=10000)
+        page.wait_for_timeout(3000)
+        if "Video unavailable" in page.content():
+            return None
+        return page.inner_text("body")
+    except Exception:
+        return None
 
 def main():
-    print("🔍 Starting Clickyleaks YouTube8M Scan")
+    start_time = datetime.utcnow()
+    chunk_number, video_index = get_current_chunk_and_index()
+    chunk_path = f"{CHUNK_DIR}/chunk_{chunk_number}.json"
 
-    scanned_video_ids = get_scanned_video_ids()
-    chunk_files = sorted(VIDEO_CHUNK_DIR.glob("chunk_*.json"))
-    chosen_chunk = random.choice(chunk_files)
+    if not os.path.exists(chunk_path):
+        print(f"🚫 Chunk file not found: {chunk_path}")
+        return
 
-    print(f"🎯 Chosen chunk: {chosen_chunk.name}")
+    print(f"📦 Scanning from: chunk_{chunk_number}.json, starting at index {video_index}")
 
-    with open(chosen_chunk, "r") as f:
-        video_ids = json.load(f)
+    with open(chunk_path, "r") as f:
+        data = json.load(f)
 
-    found_domains = []
-    checked = 0
+    total_videos = len(data["videos"])
+    domains_found = 0
 
-    for video_id in video_ids:
-        if video_id in scanned_video_ids:
-            continue
+    with sync_playwright() as p:
+        browser = p.firefox.launch(headless=True)
+        page = browser.new_page()
 
-        checked += 1
-        print(f"▶️ Checking video: {video_id}")
-
-        description = get_video_description(video_id)
-
-        if description is None:
-            print(f"⚠️ Skipping dead/unavailable video: {video_id}")
-            supabase.table("clickyleaks_checked").insert({"video_id": video_id, "scanned_at": datetime.utcnow().isoformat()}).execute()
-            continue
-
-        links = extract_links_from_description(description)
-
-        for link in links:
-            parsed = urlparse(link)
-            domain = parsed.netloc.replace("www.", "").lower()
-
-            if domain in WELL_KNOWN_DOMAINS:
+        for i in range(video_index, total_videos):
+            video_id = data["videos"][i]["id"]
+            if already_checked(video_id):
                 continue
 
-            if is_potentially_expired(domain):
-                print(f"💡 Potential expired domain: {domain}")
-                found_domains.append(domain)
-                supabase.table("clickyleaks").insert({
+            # Check time limit
+            if datetime.utcnow() - start_time > timedelta(minutes=MAX_RUNTIME_MINUTES):
+                print("⏱️ Runtime cap hit — saving progress and stopping.")
+                save_progress(chunk_number, i)
+                return
+
+            # Check domain cap
+            if domains_found >= MAX_DOMAINS:
+                print(f"✅ Found {MAX_DOMAINS} domains — saving progress and stopping.")
+                save_progress(chunk_number, i)
+                return
+
+            body = check_video_live(page, video_id)
+            if not body:
+                print(f"⚠️ Skipping dead/unavailable video: {video_id}")
+                supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
+                continue
+
+            links = extract_links_from_description(body)
+            new_domains = set()
+
+            for link in links:
+                if is_valid_domain(link):
+                    domain = re.search(r"(https?://)?([A-Za-z0-9.-]+\.[A-Za-z]{2,})", link).group(2).lower()
+                    new_domains.add(domain)
+
+            for domain in new_domains:
+                supabase.table(MAIN_TABLE).insert({
                     "domain": domain,
-                    "video_id": video_id,
+                    "source_video": video_id,
                     "verified": False,
-                    "available": True,
-                    "found_at": datetime.utcnow().isoformat()
+                    "is_available": True
                 }).execute()
+                domains_found += 1
+                print(f"🌐 Domain added: {domain} from {video_id}")
 
-                if len(found_domains) >= MAX_DOMAINS:
-                    break
+            supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
 
-        supabase.table("clickyleaks_checked").insert({"video_id": video_id, "scanned_at": datetime.utcnow().isoformat()}).execute()
-
-        if checked >= MAX_VIDEOS or len(found_domains) >= MAX_DOMAINS:
-            break
-
-    send_discord_alert(f"✅ Clickyleaks scan complete — {len(found_domains)} potential domains found from {checked} videos.")
+        save_progress(chunk_number + 1, 0)
+        print(f"✅ Finished chunk {chunk_number}. Moving to next on next run.")
 
 if __name__ == "__main__":
     main()
