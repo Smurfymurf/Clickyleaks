@@ -39,8 +39,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
-                                  libxss1 libasound2 libxshmfence1 libxrandr2 libgbm1 \
-                                  libgtk-3-0 xvfb
+                                  libxss1 libxshmfence1 libxrandr2 libgbm1 \
+                                  libgtk-3-0 xvfb libasound2t64
 
       - name: Install Python dependencies
         run: |
