@@ -26,8 +26,8 @@ PROGRESS_TABLE = "clickyleaks_chunk_progress"
 CHECKED_TABLE = "clickyleaks_checked"
 MAIN_TABLE = "Clickyleaks"
 
-MAX_DOMAINS = 5
-MAX_RUNTIME_MINUTES = 5
+MAX_DOMAINS = 10
+MAX_RUNTIME_MINUTES = 10
 
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
