@@ -185,7 +185,7 @@ def main():
     domains_found = 0
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=False)
         
         user_agent = random.choice(USER_AGENTS)
         page = browser.new_page(user_agent=user_agent)
