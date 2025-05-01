@@ -23,7 +23,7 @@ MAIN_TABLE = "Clickyleaks"
 
 # Load well-known domains
 with open(WELL_KNOWN_PATH, "r") as f:
-    WELL_KNOWN_DOMAINS = set(domain.strip().split(",")[0].lower() for domain in f if domain.strip())
+    WELL_KNOWN_DOMAINS = set(domain.strip().lower() for domain in f if domain.strip())
 print(f"✅ Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
 def get_current_chunk_and_index():
@@ -57,8 +57,7 @@ def check_video_live(page, video_id):
         if "Video unavailable" in page.content():
             return None
         return page.inner_text("body")
-    except Exception as e:
-        print(f"❌ Error checking video {video_id}: {e}")
+    except Exception:
         return None
 
 def main():
@@ -73,10 +72,8 @@ def main():
     print(f"📦 Scanning from: chunk_{chunk_number}.json, starting at index {video_index}")
 
     with open(chunk_path, "r") as f:
-        data = json.load(f)
+        video_ids = json.load(f)
 
-    # Patch: handle dict-based chunk format
-    video_ids = list(data["videos"].keys())
     total_videos = len(video_ids)
     domains_found = 0
 
@@ -86,19 +83,19 @@ def main():
 
         for i in range(video_index, total_videos):
             video_id = video_ids[i]
-            print(f"🔍 Scanning video: {video_id}")
+            print(f"🔍 Checking video: {video_id}")
 
             if already_checked(video_id):
                 print(f"⏩ Already checked: {video_id}")
                 continue
 
-            # Runtime limit check
+            # Stop if runtime cap hit
             if datetime.utcnow() - start_time > timedelta(minutes=MAX_RUNTIME_MINUTES):
                 print("⏱️ Runtime cap hit — saving progress and stopping.")
                 save_progress(chunk_number, i)
                 return
 
-            # Domain cap check
+            # Stop if domain cap hit
             if domains_found >= MAX_DOMAINS:
                 print(f"✅ Found {MAX_DOMAINS} domains — saving progress and stopping.")
                 save_progress(chunk_number, i)
@@ -132,7 +129,7 @@ def main():
             supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
             save_progress(chunk_number, i + 1)
 
-        # If chunk completed
+        # Finished chunk
         save_progress(chunk_number + 1, 0)
         print(f"✅ Finished chunk {chunk_number}. Moving to next on next run.")
 
