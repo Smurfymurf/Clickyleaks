@@ -93,13 +93,19 @@ def extract_view_count(page):
 
 def check_video_live(page, video_id):
     try:
-        page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=10000)
+        page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=15000)
         page.wait_for_timeout(3000)
-        content = page.content()
-        if "Video unavailable" in content:
+
+        # Check for real YouTube error component
+        if page.locator("ytd-player-error-message-renderer").is_visible():
+            print(f"❌ YouTube shows video error renderer for: {video_id}")
             return None, None, None
 
         title = page.title().replace(" - YouTube", "").strip()
+        if not title or title.lower() == "youtube":
+            print(f"⚠️ No valid title found — possible cookie wall, adblock, or redirect issue.")
+            return None, None, None
+
         view_count = extract_view_count(page)
 
         try:
@@ -108,7 +114,8 @@ def check_video_live(page, video_id):
             description = ""
 
         return description, title, view_count
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Error checking video {video_id}: {e}")
         return None, None, None
 
 def send_discord_alert(stats):
