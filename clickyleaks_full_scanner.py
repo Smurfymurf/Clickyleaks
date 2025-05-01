@@ -13,7 +13,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Config
-CHUNK_DIR = "Clickyleaks/data/youtube8m_chunks"
+CHUNK_DIR = "data/youtube8m_chunks"
 WELL_KNOWN_PATH = "data/well_known_domains.csv"
 MAX_DOMAINS = 5
 MAX_RUNTIME_MINUTES = 45
