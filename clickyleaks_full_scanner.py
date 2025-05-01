@@ -24,22 +24,26 @@ MAIN_TABLE = "Clickyleaks"
 
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
-    WELL_KNOWN_DOMAINS = set(tldextract.extract(d.strip().lower()).registered_domain for d in f if d.strip())
+    WELL_KNOWN_DOMAINS = set(
+        tldextract.extract(d.strip().lower()).registered_domain
+        for d in f if d.strip()
+    )
 print(f"✅ Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
 
 def get_current_chunk_and_index():
     resp = supabase.table(PROGRESS_TABLE).select("*").execute()
     if resp.data:
-        return resp.data[0]["chunk_name"], resp.data[0]["video_index"]
+        row = resp.data[0]
+        return row["chunk_name"], row.get("last_scanned_index", 0)
     return "chunk_1.json", 0
 
 
 def save_progress(chunk_name, video_index, done=False):
     supabase.table(PROGRESS_TABLE).upsert({
         "chunk_name": chunk_name,
-        "video_index": video_index,
-        "done": done
+        "last_scanned_index": video_index,
+        "fully_scanned": done
     }, on_conflict=["chunk_name"]).execute()
     print(f"📝 Progress saved — {chunk_name}, Index: {video_index}, Done: {done}")
 
@@ -115,7 +119,6 @@ def main():
                 print(f"⏩ Already checked: {video_id}")
                 continue
 
-            # Runtime or domain cap
             if datetime.utcnow() - start_time > timedelta(minutes=MAX_RUNTIME_MINUTES):
                 save_progress(chunk_name, i, done=False)
                 print("⏱️ Runtime cap hit.")
@@ -142,7 +145,6 @@ def main():
                 if not root_domain or is_well_known_domain(root_domain):
                     continue
 
-                # Soft availability assumption (placeholder for real check)
                 try:
                     supabase.table(MAIN_TABLE).upsert({
                         "domain": root_domain,
@@ -164,6 +166,7 @@ def main():
 
         save_progress(chunk_name, 0, done=True)
         print(f"✅ Finished {chunk_name}.")
+
 
 if __name__ == "__main__":
     main()
