@@ -29,7 +29,7 @@ CHECKED_TABLE = "clickyleaks_checked"
 MAIN_TABLE = "Clickyleaks"
 
 MAX_DOMAINS = 5
-MAX_RUNTIME_MINUTES = 45
+MAX_RUNTIME_MINUTES = 5
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
