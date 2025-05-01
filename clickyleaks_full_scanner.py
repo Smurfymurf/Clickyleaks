@@ -40,7 +40,7 @@ USER_AGENTS = [
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
     WELL_KNOWN_DOMAINS = set(
-        tldextract.extract(line.strip().split(",")[0].lower()).top_domain_under_public_suffix
+        line.strip().split(",")[0].lower()
         for line in f if line.strip()
     )
 
@@ -67,12 +67,12 @@ def extract_links_from_description(text):
 
 def extract_root_domain(url):
     ext = tldextract.extract(url)
-    return ext.top_domain_under_public_suffix
+    return ".".join(part for part in [ext.domain, ext.suffix] if part)
 
 def soft_check_domain_availability(domain):
     try:
-        requests.get(f"http://{domain}", timeout=5)
-        return False
+        resp = requests.get(f"http://{domain}", timeout=5, allow_redirects=True)
+        return resp.status_code >= 400
     except:
         return True
 
