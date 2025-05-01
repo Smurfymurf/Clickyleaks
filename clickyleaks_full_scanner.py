@@ -10,6 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 from dotenv import load_dotenv
 import undetected_chromedriver as uc
+from supabase import create_client
 
 # === Load .env ===
 load_dotenv()
@@ -18,8 +19,6 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
 
-# === Supabase ===
-from supabase import create_client
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 CHUNK_DIR = "data/youtube8m_chunks"
@@ -29,7 +28,7 @@ CHECKED_TABLE = "clickyleaks_checked"
 MAIN_TABLE = "Clickyleaks"
 
 MAX_DOMAINS = 5
-MAX_RUNTIME_MINUTES = 45
+MAX_RUNTIME_MINUTES = 20
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -37,12 +36,12 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64)",
 ]
 
-# === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
     WELL_KNOWN_DOMAINS = set(
-        line.strip().split(",")[0].lower()
+        tldextract.extract(line.strip().split(",")[0].lower()).top_domain_under_public_suffix
         for line in f if line.strip()
     )
+print(f"✅ Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
 def get_current_chunk_and_index():
     resp = supabase.table(PROGRESS_TABLE).select("*").order("updated_at", desc=True).limit(1).execute()
@@ -57,6 +56,7 @@ def save_progress(chunk_name, index, done=False):
         "fully_scanned": done,
         "updated_at": datetime.utcnow().isoformat()
     }, on_conflict=["chunk_name"]).execute()
+    print(f"📌 Progress saved — {chunk_name}, Index: {index}, Done: {done}")
 
 def already_checked(video_id):
     result = supabase.table(CHECKED_TABLE).select("video_id").eq("video_id", video_id).execute()
@@ -67,12 +67,12 @@ def extract_links_from_description(text):
 
 def extract_root_domain(url):
     ext = tldextract.extract(url)
-    return ".".join(part for part in [ext.domain, ext.suffix] if part)
+    return ext.top_domain_under_public_suffix
 
 def soft_check_domain_availability(domain):
     try:
-        resp = requests.get(f"http://{domain}", timeout=5, allow_redirects=True)
-        return resp.status_code >= 400
+        requests.get(f"http://{domain}", timeout=5)
+        return False
     except:
         return True
 
@@ -82,7 +82,8 @@ def get_video_data(driver, video_id):
         time.sleep(4)
 
         title = driver.title.replace(" - YouTube", "").strip()
-        if "YouTube" == title or not title:
+        if title.lower() == "youtube" or not title:
+            print(f"⚠️ Title invalid or blank for video {video_id}")
             return None, None, None
 
         try:
@@ -99,7 +100,7 @@ def get_video_data(driver, video_id):
 
         return description, title, views
     except Exception as e:
-        print(f"Error loading video {video_id}: {e}")
+        print(f"❌ Error loading video {video_id}: {e}")
         return None, None, None
 
 def send_discord_alert(stats):
@@ -113,20 +114,21 @@ def send_discord_alert(stats):
             f"⛔️ Active domains skipped: **{stats['resolves_skipped']}**\n"
             f"ℹ️ Videos with no links: **{stats['no_links']}**\n"
             f"❌ Unavailable videos: **{stats['unavailable']}**\n"
-            f"✅ Potential available domains found: **{len(stats['new_domains'])}**\n{domain_list}"
+            f"✅ Domains logged: **{len(stats['new_domains'])}**\n{domain_list}"
         )
     }
     try:
         requests.post(DISCORD_WEBHOOK, json=message, timeout=10)
+        print("📣 Discord alert sent.")
     except Exception as e:
-        print(f"Discord webhook error: {e}")
+        print(f"⚠️ Failed to send Discord alert: {e}")
 
 def main():
     chunk_name, start_index = get_current_chunk_and_index()
     path = f"{CHUNK_DIR}/{chunk_name}"
 
     if not os.path.exists(path):
-        print(f"Chunk file not found: {path}")
+        print(f"❌ Chunk file not found: {path}")
         return
 
     with open(path, "r") as f:
@@ -153,23 +155,26 @@ def main():
 
     for i in range(start_index, len(videos)):
         video_id = videos[i]
+        print(f"\n🔍 Checking video: {video_id}")
         stats["videos_scanned"] += 1
 
         if already_checked(video_id):
+            print(f"⏭️ Already checked: {video_id}")
             continue
 
         if datetime.utcnow() - start_time > timedelta(minutes=MAX_RUNTIME_MINUTES):
             save_progress(chunk_name, i)
-            send_discord_alert(stats)
-            return
+            print("⏱️ Max runtime reached — exiting.")
+            break
 
         if domains_found >= MAX_DOMAINS:
             save_progress(chunk_name, i)
-            send_discord_alert(stats)
-            return
+            print("✅ Domain cap reached — exiting.")
+            break
 
         desc, title, views = get_video_data(driver, video_id)
         if not desc:
+            print(f"❌ Video unavailable or no description: {video_id}")
             stats["unavailable"] += 1
             supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
             save_progress(chunk_name, i + 1)
@@ -177,37 +182,44 @@ def main():
 
         links = extract_links_from_description(desc)
         if not links:
+            print(f"ℹ️ No links found in: {video_id}")
             stats["no_links"] += 1
         else:
             for link in links:
                 root = extract_root_domain(link)
                 if root in WELL_KNOWN_DOMAINS:
+                    print(f"🔸 Skipped well-known domain: {root}")
                     stats["well_known_skipped"] += 1
                     continue
                 if not soft_check_domain_availability(root):
+                    print(f"⛔️ Domain resolves (active): {root}")
                     stats["resolves_skipped"] += 1
                     continue
 
-                supabase.table(MAIN_TABLE).upsert({
-                    "domain": root,
-                    "full_url": link,
-                    "video_title": title,
-                    "video_url": f"https://www.youtube.com/watch?v={video_id}",
-                    "view_count": views,
-                    "video_id": video_id,
-                    "verified": False,
-                    "is_available": True,
-                    "discovered_at": datetime.utcnow().isoformat()
-                }, on_conflict=["video_id", "domain"]).execute()
-
-                domains_found += 1
-                stats["new_domains"].append(root)
+                try:
+                    supabase.table(MAIN_TABLE).upsert({
+                        "domain": root,
+                        "full_url": link,
+                        "video_title": title,
+                        "video_url": f"https://www.youtube.com/watch?v={video_id}",
+                        "view_count": views,
+                        "video_id": video_id,
+                        "verified": False,
+                        "is_available": True,
+                        "discovered_at": datetime.utcnow().isoformat()
+                    }, on_conflict=["video_id", "domain"]).execute()
+                    domains_found += 1
+                    stats["new_domains"].append(root)
+                    print(f"✅ Domain saved: {root} from {video_id}")
+                except Exception as e:
+                    print(f"⚠️ Failed to save {root}: {e}")
 
         supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
         save_progress(chunk_name, i + 1)
         time.sleep(random.uniform(3, 7))
 
     save_progress(chunk_name, len(videos), done=True)
+    print("\n✅ Scan finished.")
     send_discord_alert(stats)
     driver.quit()
 
