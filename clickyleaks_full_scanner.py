@@ -1,14 +1,14 @@
 import os
-import json
 import re
+import json
 import time
+import requests
 from datetime import datetime, timedelta
-import tldextract
-
 from playwright.sync_api import sync_playwright
 from supabase import create_client
+import tldextract
 
-# === Config ===
+# === ENV and config ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -25,82 +25,77 @@ MAIN_TABLE = "Clickyleaks"
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
     WELL_KNOWN_DOMAINS = set(
-        tldextract.extract(d.strip().lower()).registered_domain
-        for d in f if d.strip()
+        tldextract.extract(line.strip().split(",")[0].lower()).registered_domain
+        for line in f if line.strip()
     )
 print(f"✅ Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
+# === Helpers ===
 
 def get_current_chunk_and_index():
-    resp = supabase.table(PROGRESS_TABLE).select("*").execute()
+    resp = supabase.table(PROGRESS_TABLE).select("*").order("updated_at", desc=True).limit(1).execute()
     if resp.data:
-        row = resp.data[0]
-        return row["chunk_name"], row.get("last_scanned_index", 0)
+        return resp.data[0]["chunk_name"], resp.data[0]["last_scanned_index"]
     return "chunk_1.json", 0
 
-
-def save_progress(chunk_name, video_index, done=False):
+def save_progress(chunk_name, index, done=False):
     supabase.table(PROGRESS_TABLE).upsert({
         "chunk_name": chunk_name,
-        "last_scanned_index": video_index,
-        "fully_scanned": done
+        "last_scanned_index": index,
+        "fully_scanned": done,
+        "updated_at": datetime.utcnow().isoformat()
     }, on_conflict=["chunk_name"]).execute()
-    print(f"📝 Progress saved — {chunk_name}, Index: {video_index}, Done: {done}")
-
+    print(f"📝 Progress saved — {chunk_name}, Index: {index}, Done: {done}")
 
 def already_checked(video_id):
     result = supabase.table(CHECKED_TABLE).select("video_id").eq("video_id", video_id).execute()
     return len(result.data) > 0
 
+def extract_links_from_description(description):
+    return re.findall(r"https?://[^\s)>\"]+", description)
 
-def extract_links_from_description(text):
-    return re.findall(r"https?://[^\s)>\"]+", text)
-
-
-def extract_root_domain(link):
-    ext = tldextract.extract(link)
+def extract_root_domain(url):
+    ext = tldextract.extract(url)
     return ext.registered_domain
 
+def is_valid_domain(link):
+    root = extract_root_domain(link)
+    return root and root not in WELL_KNOWN_DOMAINS
 
-def is_well_known_domain(domain):
-    return domain in WELL_KNOWN_DOMAINS
-
+def soft_check_domain_availability(domain):
+    try:
+        requests.get(f"http://{domain}", timeout=5)
+        return False  # Domain resolves
+    except:
+        return True   # Domain unreachable → maybe expired
 
 def check_video_live(page, video_id):
     try:
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        page.goto(url, timeout=10000)
+        page.goto(f"https://www.youtube.com/watch?v={video_id}", timeout=10000)
         page.wait_for_timeout(3000)
-        if "Video unavailable" in page.content():
-            return None
-        return page.content()
-    except Exception:
-        return None
-
-
-def get_video_meta(page):
-    try:
+        content = page.content()
+        if "Video unavailable" in content:
+            return None, None, None
         title = page.title()
-        view_count = 0
-        match = re.search(r"([\d,]+) views", page.content())
-        if match:
-            view_count = int(match.group(1).replace(",", ""))
-        return title, view_count
-    except:
-        return "", 0
+        view_text = page.inner_text("body")
+        match = re.search(r"([\d,]+)\sviews", view_text)
+        view_count = int(match.group(1).replace(",", "")) if match else None
+        return page.inner_text("body"), title, view_count
+    except Exception:
+        return None, None, None
 
+# === Main ===
 
 def main():
     start_time = datetime.utcnow()
     chunk_name, video_index = get_current_chunk_and_index()
-    chunk_path = os.path.join(CHUNK_DIR, chunk_name)
+    chunk_path = f"{CHUNK_DIR}/{chunk_name}"
 
     if not os.path.exists(chunk_path):
         print(f"🚫 Chunk file not found: {chunk_path}")
         return
 
     print(f"📦 Scanning from: {chunk_name}, starting at index {video_index}")
-
     with open(chunk_path, "r") as f:
         videos = json.load(f)
 
@@ -112,7 +107,8 @@ def main():
         page = browser.new_page()
 
         for i in range(video_index, total_videos):
-            video_id = videos[i].get("id")
+            video = videos[i]
+            video_id = video.get("id")
             print(f"🔍 Checking video: {video_id}")
 
             if already_checked(video_id):
@@ -121,52 +117,50 @@ def main():
 
             if datetime.utcnow() - start_time > timedelta(minutes=MAX_RUNTIME_MINUTES):
                 save_progress(chunk_name, i, done=False)
-                print("⏱️ Runtime cap hit.")
+                print("⏱️ Runtime cap hit — stopping.")
                 return
 
             if domains_found >= MAX_DOMAINS:
                 save_progress(chunk_name, i, done=False)
-                print(f"✅ Found {MAX_DOMAINS} domains.")
+                print(f"✅ Hit domain cap ({MAX_DOMAINS}) — stopping.")
                 return
 
-            body = check_video_live(page, video_id)
+            body, title, views = check_video_live(page, video_id)
             if not body:
-                print(f"⚠️ Dead video: {video_id}")
                 supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
                 save_progress(chunk_name, i + 1)
                 continue
 
-            title, view_count = get_video_meta(page)
             links = extract_links_from_description(body)
-            new_domains = set()
-
-            for full_url in links:
-                root_domain = extract_root_domain(full_url)
-                if not root_domain or is_well_known_domain(root_domain):
+            for link in links:
+                root_domain = extract_root_domain(link)
+                if not root_domain or root_domain in WELL_KNOWN_DOMAINS:
+                    continue
+                if not soft_check_domain_availability(root_domain):
                     continue
 
                 try:
                     supabase.table(MAIN_TABLE).upsert({
                         "domain": root_domain,
-                        "video_id": video_id,
-                        "video_url": f"https://www.youtube.com/watch?v={video_id}",
+                        "full_url": link,
                         "video_title": title,
-                        "view_count": view_count,
-                        "full_url": full_url,
+                        "video_url": f"https://www.youtube.com/watch?v={video_id}",
+                        "view_count": views,
+                        "video_id": video_id,
+                        "verified": False,
                         "is_available": True,
-                        "verified": False
+                        "discovered_at": datetime.utcnow().isoformat()
                     }, on_conflict=["video_id", "domain"]).execute()
-                    print(f"🌐 Domain added: {root_domain} from {video_id}")
                     domains_found += 1
+                    print(f"🌐 Domain added: {root_domain} from {video_id}")
                 except Exception as e:
                     print(f"⚠️ Error inserting {root_domain}: {e}")
 
             supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
             save_progress(chunk_name, i + 1)
 
-        save_progress(chunk_name, 0, done=True)
+        save_progress(chunk_name, total_videos, done=True)
         print(f"✅ Finished {chunk_name}.")
-
 
 if __name__ == "__main__":
     main()
