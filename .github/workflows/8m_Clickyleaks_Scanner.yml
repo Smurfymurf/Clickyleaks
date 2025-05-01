@@ -13,6 +13,10 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      DOMAINR_API_KEY: ${{ secrets.DOMAINR_API_KEY }}
+      GODADDY_API_KEY: ${{ secrets.GODADDY_API_KEY }}
+      GODADDY_API_SECRET: ${{ secrets.GODADDY_API_SECRET }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
 
     steps:
       - name: Checkout repo
@@ -23,11 +27,28 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install system dependencies for Playwright
         run: |
-          python -m pip install --upgrade pip
-          pip install playwright supabase tldextract
-          playwright install firefox
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+                                  libxss1 libasound2 libxshmfence1 libxrandr2 libgbm1 \
+                                  libgtk-3-0 xvfb
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install undetected-chromedriver
+          pip install playwright
+          playwright install chromium
 
       - name: Run Clickyleaks Full Scanner
-        run: python clickyleaks_full_scanner.py
+        run: xvfb-run python clickyleaks_full_scanner.py
