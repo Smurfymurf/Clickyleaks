@@ -29,16 +29,16 @@ print(f"✅ Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 def get_current_chunk_and_index():
     resp = supabase.table(PROGRESS_TABLE).select("*").execute()
     if resp.data:
-        return resp.data[0]["chunk_number"], resp.data[0]["video_index"]
+        return resp.data[0]["chunk_index"], resp.data[0]["video_index"]
     return 1, 0
 
-def save_progress(chunk_number, video_index):
+def save_progress(chunk_index, video_index):
     supabase.table(PROGRESS_TABLE).upsert({
         "id": 1,
-        "chunk_number": chunk_number,
+        "chunk_index": chunk_index,
         "video_index": video_index
     }).execute()
-    print(f"📝 Progress saved — Chunk: {chunk_number}, Index: {video_index}")
+    print(f"📝 Progress saved — Chunk: {chunk_index}, Index: {video_index}")
 
 def already_checked(video_id):
     result = supabase.table(CHECKED_TABLE).select("video_id").eq("video_id", video_id).execute()
