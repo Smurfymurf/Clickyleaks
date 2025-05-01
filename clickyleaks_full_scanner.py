@@ -6,10 +6,7 @@ import random
 import requests
 import tldextract
 from datetime import datetime, timedelta
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
 from dotenv import load_dotenv
-import undetected_chromedriver as uc
 
 # === Load .env ===
 load_dotenv()
@@ -17,6 +14,7 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 # === Supabase ===
 from supabase import create_client
@@ -30,12 +28,6 @@ MAIN_TABLE = "Clickyleaks"
 
 MAX_DOMAINS = 5
 MAX_RUNTIME_MINUTES = 5
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3)",
-    "Mozilla/5.0 (X11; Linux x86_64)",
-]
 
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
@@ -78,45 +70,45 @@ def soft_check_domain_availability(domain):
     except:
         return True
 
-def get_video_data(driver, video_id):
+def get_video_data_youtube_api(video_id):
+    url = "https://www.googleapis.com/youtube/v3/videos"
+    params = {
+        "part": "snippet,statistics",
+        "id": video_id,
+        "key": YOUTUBE_API_KEY
+    }
     try:
-        print(f"[Fetch] Loading video {video_id}")
-        driver.get(f"https://www.youtube.com/watch?v={video_id}")
-        time.sleep(4)
+        res = requests.get(url, params=params, timeout=10)
+        data = res.json()
 
-        title = driver.title.replace(" - YouTube", "").strip()
-        if "YouTube" == title or not title:
+        if "items" not in data or not data["items"]:
             return None, None, None
 
-        try:
-            description_el = driver.find_element(By.CSS_SELECTOR, "#description")
-            description = description_el.text
-        except NoSuchElementException:
-            description = ""
+        item = data["items"][0]
+        snippet = item.get("snippet", {})
+        statistics = item.get("statistics", {})
 
-        try:
-            view_text = driver.find_element(By.CSS_SELECTOR, "span.view-count").text
-            views = int(re.sub(r"[^\d]", "", view_text))
-        except:
-            views = None
+        title = snippet.get("title", "").strip()
+        description = snippet.get("description", "")
+        views = int(statistics.get("viewCount", 0)) if "viewCount" in statistics else None
 
         return description, title, views
     except Exception as e:
-        print(f"[Error] Loading video {video_id}: {e}")
+        print(f"[Error] YouTube API fetch failed for {video_id}: {e}")
         return None, None, None
 
 def send_discord_alert(stats):
     domain_list = "\n".join(f"- {d}" for d in stats["new_domains"]) if stats["new_domains"] else "_None_"
     message = {
         "content": (
-            f"ð **Clickyleaks Scan Complete**\n"
-            f"ð¦ Chunk: `{stats['chunk']}`\n"
-            f"ð¥ Videos scanned: **{stats['videos_scanned']}**\n"
-            f"ð¸ Well-known domains skipped: **{stats['well_known_skipped']}**\n"
-            f"âï¸ Active domains skipped: **{stats['resolves_skipped']}**\n"
-            f"â¹ï¸ Videos with no links: **{stats['no_links']}**\n"
-            f"â Unavailable videos: **{stats['unavailable']}**\n"
-            f"â Potential available domains found: **{len(stats['new_domains'])}**\n{domain_list}"
+            f"🔔 **Clickyleaks Scan Complete**\n"
+            f"📦 Chunk: `{stats['chunk']}`\n"
+            f"🎥 Videos scanned: **{stats['videos_scanned']}**\n"
+            f"🔸 Well-known domains skipped: **{stats['well_known_skipped']}**\n"
+            f"⛔️ Active domains skipped: **{stats['resolves_skipped']}**\n"
+            f"ℹ️ Videos with no links: **{stats['no_links']}**\n"
+            f"❌ Unavailable videos: **{stats['unavailable']}**\n"
+            f"✅ Potential available domains found: **{len(stats['new_domains'])}**\n{domain_list}"
         )
     }
     print("[Alert] Sending Discord summary.")
@@ -148,16 +140,6 @@ def main():
         "new_domains": []
     }
 
-    options = uc.ChromeOptions()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument(f"user-agent={random.choice(USER_AGENTS)}")
-
-    driver = uc.Chrome(
-    options=options,
-    headless=True,
-    browser_executable_path="/opt/chrome/chrome"
-)
     start_time = datetime.utcnow()
     domains_found = 0
 
@@ -181,7 +163,7 @@ def main():
             send_discord_alert(stats)
             return
 
-        desc, title, views = get_video_data(driver, video_id)
+        desc, title, views = get_video_data_youtube_api(video_id)
         if not desc:
             print(f"[Unavailable] Skipped {video_id} (no description/title)")
             stats["unavailable"] += 1
@@ -223,11 +205,10 @@ def main():
 
         supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
         save_progress(chunk_name, i + 1)
-        time.sleep(random.uniform(3, 7))
+        time.sleep(random.uniform(1, 2))  # Keep low to avoid API quota issues
 
     save_progress(chunk_name, len(videos), done=True)
     send_discord_alert(stats)
-    driver.quit()
     print("[Done] Scan complete.")
 
 if __name__ == "__main__":
