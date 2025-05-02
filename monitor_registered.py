@@ -22,17 +22,17 @@ def check_domain(domain):
     return False
 
 def main():
-    results = supabase.table("Clickyleaks").select("*").eq("is_available", True).eq("verified", True).limit(100).execute()
+    results = supabase.table("Clickyleaks").select("*").eq("is_available", True).eq("verified", True).eq("taken", False).limit(100).execute()
     domains = results.data
 
     for row in domains:
         domain = row["domain"]
         domain_id = row["id"]
-
-        is_still_available = check_domain(domain)
         now = datetime.utcnow().isoformat()
 
-        if not is_still_available:
+        is_available = check_domain(domain)
+
+        if not is_available:
             supabase.table("Clickyleaks").update({
                 "is_available": False,
                 "taken": True,
