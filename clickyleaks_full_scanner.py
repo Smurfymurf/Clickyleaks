@@ -37,11 +37,22 @@ with open(WELL_KNOWN_PATH, "r") as f:
     )
 print(f"[Init] Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
+# === Updated to randomize chunk selection ===
 def get_current_chunk_and_index():
-    resp = supabase.table(PROGRESS_TABLE).select("*").order("updated_at", desc=True).limit(1).execute()
+    all_chunks = [f for f in os.listdir(CHUNK_DIR) if f.endswith(".json")]
+    if not all_chunks:
+        print("[Error] No chunk files found.")
+        return None, 0
+
+    chunk_name = random.choice(all_chunks)
+
+    resp = supabase.table(PROGRESS_TABLE).select("*").eq("chunk_name", chunk_name).limit(1).execute()
     if resp.data:
-        return resp.data[0]["chunk_name"], resp.data[0]["last_scanned_index"]
-    return "chunk_1.json", 0
+        print(f"[Resume] Found saved progress for {chunk_name}")
+        return chunk_name, resp.data[0]["last_scanned_index"]
+
+    print(f"[New Chunk] Starting fresh on {chunk_name}")
+    return chunk_name, 0
 
 def save_progress(chunk_name, index, done=False):
     print(f"[Progress] Saving progress: {chunk_name} at index {index} (done={done})")
@@ -119,8 +130,10 @@ def send_discord_alert(stats):
 
 def main():
     chunk_name, start_index = get_current_chunk_and_index()
-    path = f"{CHUNK_DIR}/{chunk_name}"
+    if not chunk_name:
+        return
 
+    path = f"{CHUNK_DIR}/{chunk_name}"
     if not os.path.exists(path):
         print(f"[Error] Chunk file not found: {path}")
         return
