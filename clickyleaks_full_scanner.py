@@ -27,7 +27,7 @@ CHECKED_TABLE = "clickyleaks_checked"
 MAIN_TABLE = "Clickyleaks"
 
 MAX_DOMAINS = 10
-MAX_RUNTIME_MINUTES = 10
+MAX_RUNTIME_MINUTES = 5
 
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
