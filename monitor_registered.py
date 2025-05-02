@@ -22,7 +22,7 @@ def check_domain(domain):
     return False
 
 def main():
-    results = supabase.table("Clickyleaks").select("*").eq("available", True).eq("verified", True).limit(100).execute()
+    results = supabase.table("Clickyleaks").select("*").eq("is_available", True).eq("verified", True).limit(100).execute()
     domains = results.data
 
     for row in domains:
