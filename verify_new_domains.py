@@ -3,15 +3,27 @@ import requests
 from datetime import datetime
 from supabase import create_client
 from dotenv import load_dotenv
+import tldextract
 
 # === Load env ===
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-APILAYER_KEY = os.getenv("APILAYER_KEY")  # Your key: sSmsd461UVYVpBUajOxh94ZiVJPCELAs
+APILAYER_KEY = os.getenv("APILAYER_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 WHOIS_ENDPOINT = "https://api.apilayer.com/whois/check"
+
+SUPPORTED_TLDS = {
+    "com", "me", "net", "org", "sh", "io", "co", "club", "biz", "mobi", "info",
+    "us", "domains", "cloud", "fr", "au", "ru", "uk", "nl", "fi", "br", "hr",
+    "ee", "ca", "sk", "se", "no", "cz", "it", "in", "icu", "top", "xyz", "cn",
+    "cf", "hk", "sg", "pt", "site", "kz", "si", "ae", "do", "yoga", "xxx", "ws",
+    "work", "wiki", "watch", "wtf", "world", "website", "vip", "ly", "dev",
+    "network", "company", "page", "rs", "run", "science", "sex", "shop",
+    "solutions", "so", "studio", "style", "tech", "travel", "vc", "pub", "pro",
+    "app", "press", "ooo", "de"
+}
 
 def check_domain(domain):
     headers = {"apikey": APILAYER_KEY}
@@ -21,6 +33,10 @@ def check_domain(domain):
         return data.get("available", False)
     return False
 
+def is_supported_tld(domain):
+    ext = tldextract.extract(domain)
+    return ext.suffix.lower() in SUPPORTED_TLDS
+
 def main():
     results = supabase.table("Clickyleaks").select("*").eq("is_available", True).eq("verified", False).limit(50).execute()
     domains = results.data
@@ -29,10 +45,15 @@ def main():
         domain = row["domain"]
         domain_id = row["id"]
 
+        if not is_supported_tld(domain):
+            print(f"[SKIP] Unsupported TLD: {domain}")
+            continue
+
         is_available = check_domain(domain)
         now = datetime.utcnow().isoformat()
 
         supabase.table("Clickyleaks").update({
+            "is_available": is_available,
             "verified": True,
             "taken": not is_available,
             "last_verified_at": now
