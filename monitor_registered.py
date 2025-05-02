@@ -34,7 +34,7 @@ def main():
 
         if not is_still_available:
             supabase.table("Clickyleaks").update({
-                "available": False,
+                "is_available": False,
                 "taken": True,
                 "last_verified_at": now
             }).eq("id", domain_id).execute()
