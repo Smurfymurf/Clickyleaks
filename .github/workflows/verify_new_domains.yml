@@ -1,9 +1,8 @@
 name: Verify New Domains
 
 on:
- schedule:
-  - cron: '0 */2 * * *'  # Every 2 hours
-  workflow_dispatch:
+schedule:
+  - cron: '0 */2 * * *'  # Every 2 hours  workflow_dispatch:
 
 jobs:
   verify-new:
