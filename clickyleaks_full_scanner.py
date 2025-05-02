@@ -7,17 +7,15 @@ import requests
 import tldextract
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from supabase import create_client
 
 # === Load .env ===
 load_dotenv()
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-# === Supabase ===
-from supabase import create_client
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 CHUNK_DIR = "data/youtube8m_chunks"
@@ -29,6 +27,16 @@ MAIN_TABLE = "Clickyleaks"
 MAX_DOMAINS = 10
 MAX_RUNTIME_MINUTES = 5
 
+SUPPORTED_TLDS = {
+    "com", "me", "net", "org", "sh", "io", "co", "club", "biz", "mobi", "info", "us",
+    "domains", "cloud", "fr", "au", "ru", "uk", "nl", "fi", "br", "hr", "ee", "ca",
+    "sk", "se", "no", "cz", "it", "in", "icu", "top", "xyz", "cn", "cf", "hk", "sg",
+    "pt", "site", "kz", "si", "ae", "do", "yoga", "xxx", "ws", "work", "wiki",
+    "watch", "wtf", "world", "website", "vip", "ly", "dev", "network", "company",
+    "page", "rs", "run", "science", "sex", "shop", "solutions", "so", "studio",
+    "style", "tech", "travel", "vc", "pub", "pro", "app", "press", "ooo", "de"
+}
+
 # === Load well-known domains ===
 with open(WELL_KNOWN_PATH, "r") as f:
     WELL_KNOWN_DOMAINS = set(
@@ -37,7 +45,6 @@ with open(WELL_KNOWN_PATH, "r") as f:
     )
 print(f"[Init] Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
-# === Updated to randomize chunk selection ===
 def get_current_chunk_and_index():
     all_chunks = [f for f in os.listdir(CHUNK_DIR) if f.endswith(".json")]
     if not all_chunks:
@@ -101,7 +108,7 @@ def get_video_data_youtube_api(video_id):
 
         title = snippet.get("title", "").strip()
         description = snippet.get("description", "")
-        views = int(statistics.get("viewCount", 0)) if "viewCount" in statistics else None
+        views = int(statistics.get("viewCount", 0)) if "viewCount" in statistics else 0
 
         return description, title, views
     except Exception as e:
@@ -177,8 +184,8 @@ def main():
             return
 
         desc, title, views = get_video_data_youtube_api(video_id)
-        if not desc:
-            print(f"[Unavailable] Skipped {video_id} (no description/title)")
+        if not desc or views < 20000:
+            print(f"[Skip] {video_id} - No description or under 20K views ({views})")
             stats["unavailable"] += 1
             supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
             save_progress(chunk_name, i + 1)
@@ -191,6 +198,10 @@ def main():
         else:
             for link in links:
                 root = extract_root_domain(link)
+                tld = tldextract.extract(link).suffix.lower()
+                if tld not in SUPPORTED_TLDS:
+                    print(f"[Skip] Unsupported TLD: {tld} ({root})")
+                    continue
                 if root in WELL_KNOWN_DOMAINS:
                     stats["well_known_skipped"] += 1
                     print(f"[Skip] Well-known: {root}")
@@ -218,7 +229,7 @@ def main():
 
         supabase.table(CHECKED_TABLE).insert({"video_id": video_id}).execute()
         save_progress(chunk_name, i + 1)
-        time.sleep(random.uniform(1, 2))  # Keep low to avoid API quota issues
+        time.sleep(random.uniform(1, 2))
 
     save_progress(chunk_name, len(videos), done=True)
     send_discord_alert(stats)
