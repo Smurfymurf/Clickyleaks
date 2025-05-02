@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import create_client
 from dotenv import load_dotenv
 
@@ -40,9 +40,29 @@ def check_domain(domain):
         return None
 
 def main():
-    rows = supabase.table("Clickyleaks").select("*").eq("is_available", True).eq("verified", True).limit(100).execute().data
+    # 1. Fetch domains with no last_verified_at
+    no_verified = supabase.table("Clickyleaks")\
+        .select("*")\
+        .eq("is_available", True)\
+        .eq("verified", True)\
+        .is_("last_verified_at", None)\
+        .limit(50)\
+        .execute().data
 
-    for row in rows:
+    # 2. Fetch domains verified more than 48 hours ago
+    cutoff = (datetime.utcnow() - timedelta(hours=48)).isoformat()
+    stale_verified = supabase.table("Clickyleaks")\
+        .select("*")\
+        .eq("is_available", True)\
+        .eq("verified", True)\
+        .lt("last_verified_at", cutoff)\
+        .limit(50)\
+        .execute().data
+
+    to_check = no_verified + stale_verified
+    print(f"[INFO] Checking {len(to_check)} domains...")
+
+    for row in to_check:
         domain = row["domain"]
         domain_id = row["id"]
         now = datetime.utcnow().isoformat()
