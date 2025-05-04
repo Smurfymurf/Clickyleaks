@@ -88,6 +88,15 @@ def soft_check_domain_availability(domain):
     except:
         return True
 
+def get_logged_domains(domain_list):
+    if not domain_list:
+        return set()
+
+    result = supabase.table(MAIN_TABLE).select("domain").in_("domain", domain_list).execute()
+    if result.data:
+        return set(entry["domain"] for entry in result.data)
+    return set()
+
 def get_video_data_youtube_api(video_id):
     url = "https://www.googleapis.com/youtube/v3/videos"
     params = {
@@ -117,6 +126,7 @@ def get_video_data_youtube_api(video_id):
 
 def send_discord_alert(stats):
     domain_list = "\n".join(f"- {d}" for d in stats["new_domains"]) if stats["new_domains"] else "_None_"
+    skipped_existing = stats.get("existing_skipped", 0)
     message = {
         "content": (
             f"🔔 **Clickyleaks Scan Complete**\n"
@@ -124,6 +134,7 @@ def send_discord_alert(stats):
             f"🎥 Videos scanned: **{stats['videos_scanned']}**\n"
             f"🔸 Well-known domains skipped: **{stats['well_known_skipped']}**\n"
             f"⛔️ Active domains skipped: **{stats['resolves_skipped']}**\n"
+            f"⚠️ Previously logged domains skipped: **{skipped_existing}**\n"
             f"ℹ️ Videos with no links: **{stats['no_links']}**\n"
             f"❌ Unavailable videos: **{stats['unavailable']}**\n"
             f"✅ Potential available domains found: **{len(stats['new_domains'])}**\n{domain_list}"
@@ -155,6 +166,7 @@ def main():
         "videos_scanned": 0,
         "well_known_skipped": 0,
         "resolves_skipped": 0,
+        "existing_skipped": 0,
         "no_links": 0,
         "unavailable": 0,
         "new_domains": []
@@ -196,9 +208,13 @@ def main():
             stats["no_links"] += 1
             print(f"[No Links] {video_id}")
         else:
+            all_roots = []
+            link_map = {}
+
             for link in links:
                 root = extract_root_domain(link)
                 tld = tldextract.extract(link).suffix.lower()
+
                 if tld not in SUPPORTED_TLDS:
                     print(f"[Skip] Unsupported TLD: {tld} ({root})")
                     continue
@@ -211,9 +227,17 @@ def main():
                     print(f"[Skip] Still resolves: {root}")
                     continue
 
+                all_roots.append(root)
+                link_map[root] = link
+
+            existing_roots = get_logged_domains(all_roots)
+            new_roots = [r for r in all_roots if r not in existing_roots]
+            stats["existing_skipped"] += len(existing_roots)
+
+            for root in new_roots:
                 supabase.table(MAIN_TABLE).upsert({
                     "domain": root,
-                    "full_url": link,
+                    "full_url": link_map[root],
                     "video_title": title,
                     "video_url": f"https://www.youtube.com/watch?v={video_id}",
                     "view_count": views,
