@@ -1,7 +1,6 @@
 import os
 import json
 import random
-import time
 import requests
 from dotenv import load_dotenv
 from supabase import create_client
@@ -29,7 +28,7 @@ def get_reddit_token():
         "username": REDDIT_USERNAME,
         "password": REDDIT_PASSWORD,
     }
-    headers = {"User-Agent": "ClickyleaksBot/0.1 by stevethesmurf"}
+    headers = {"User-Agent": f"ClickyleaksBot/0.1 by {REDDIT_USERNAME}"}
     try:
         res = requests.post("https://www.reddit.com/api/v1/access_token",
                             auth=auth, data=data, headers=headers)
@@ -73,8 +72,7 @@ def save_ids_to_chunk(new_ids):
     if not new_ids:
         return
 
-    if not os.path.exists(os.path.dirname(CHUNK_FILE)):
-        os.makedirs(os.path.dirname(CHUNK_FILE))
+    os.makedirs(os.path.dirname(CHUNK_FILE), exist_ok=True)
 
     if os.path.exists(CHUNK_FILE):
         with open(CHUNK_FILE, "r") as f:
@@ -103,7 +101,7 @@ def main():
 
     headers = {
         "Authorization": f"bearer {token}",
-        "User-Agent": "ClickyleaksBot/0.1 by stevethesmurf"
+        "User-Agent": f"ClickyleaksBot/0.1 by {REDDIT_USERNAME}"
     }
 
     url = f"https://oauth.reddit.com/r/{subreddit}/new.json?limit=100"
