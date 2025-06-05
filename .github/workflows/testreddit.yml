@@ -1,0 +1,32 @@
+name: Test Reddit Auth
+
+on:
+  workflow_dispatch:  # allows manual triggering
+  push:
+    paths:
+      - testreddit.py
+
+jobs:
+  test-reddit-auth:
+    runs-on: ubuntu-latest
+
+    env:
+      REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+      REDDIT_SECRET: ${{ secrets.REDDIT_SECRET }}
+      REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+      REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install requests
+        run: pip install requests python-dotenv
+
+      - name: Run Reddit auth test
+        run: python testreddit.py
