@@ -2,11 +2,9 @@ import os
 import json
 import random
 import requests
-from dotenv import load_dotenv
 from supabase import create_client
 
-# === Load environment variables ===
-load_dotenv()
+# === Environment Variables from GitHub Actions ===
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
