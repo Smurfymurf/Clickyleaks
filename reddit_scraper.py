@@ -7,7 +7,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client
 
-# === Load env ===
+# === Load environment variables ===
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -19,7 +19,11 @@ CHUNK_DIR = "data/youtube8m_chunks"
 CHUNK_SIZE = 1000
 MAX_POSTS = 100
 
-HEADERS = {"User-Agent": "Clickyleaks Reddit Scraper"}
+# ✅ Updated User-Agent with your Reddit username
+HEADERS = {
+    "User-Agent": "ClickyleaksBot/1.0 by chatbotbuzz"
+}
+
 YOUTUBE_PATTERNS = [
     r"https?://(?:www\.)?youtube\.com/watch\?v=([A-Za-z0-9_-]{11})",
     r"https?://(?:www\.)?youtu\.be/([A-Za-z0-9_-]{11})"
@@ -27,13 +31,13 @@ YOUTUBE_PATTERNS = [
 
 os.makedirs(CHUNK_DIR, exist_ok=True)
 
-# === Load subreddits ===
+# === Load subreddit list ===
 with open(SUBREDDIT_FILE, "r") as f:
     subreddits = [line.strip() for line in f if line.strip()]
 
 subreddit = random.choice(subreddits)
 
-def fetch_posts(subreddit):
+def fetch_reddit_posts(subreddit):
     url = f"https://www.reddit.com/r/{subreddit}/new.json?limit={MAX_POSTS}"
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
@@ -50,30 +54,30 @@ def extract_youtube_ids(text):
         ids.update(re.findall(pattern, text))
     return ids
 
-def bulk_check(ids):
+def bulk_check_ids(ids):
     if not ids:
         return set()
-    all_checked = set()
+    checked = set()
     chunks = [list(ids)[i:i+100] for i in range(0, len(ids), 100)]
     for chunk in chunks:
         res = supabase.table("clickyleaks_checked").select("video_id").in_("video_id", chunk).execute()
         if res.data:
-            all_checked.update(row["video_id"] for row in res.data)
-    return all_checked
+            checked.update(row["video_id"] for row in res.data)
+    return checked
 
 def main():
-    posts = fetch_posts(subreddit)
+    posts = fetch_reddit_posts(subreddit)
     all_ids = set()
 
     for post in posts:
         data = post.get("data", {})
-        text = f"{data.get('title', '')}\n{data.get('selftext', '')}\n{data.get('url', '')}"
-        ids = extract_youtube_ids(text)
+        content = f"{data.get('title', '')}\n{data.get('selftext', '')}\n{data.get('url', '')}"
+        ids = extract_youtube_ids(content)
         all_ids.update(ids)
 
     print(f"[{subreddit}] Found {len(all_ids)} video IDs")
 
-    checked = bulk_check(all_ids)
+    checked = bulk_check_ids(all_ids)
     fresh = list(all_ids - checked)
 
     if not fresh:
