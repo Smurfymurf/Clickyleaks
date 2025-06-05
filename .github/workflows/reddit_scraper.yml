@@ -1,0 +1,32 @@
+name: Reddit YouTube Scraper
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Every hour on the hour (UTC)
+  workflow_dispatch:     # Allow manual trigger
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install python-dotenv supabase
+
+      - name: Run Reddit scraper
+        run: |
+          python reddit_scraper.py
