@@ -1,7 +1,6 @@
 import os
 import json
 import random
-import time
 import requests
 from dotenv import load_dotenv
 from supabase import create_client
@@ -18,34 +17,38 @@ REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 SUBREDDIT_LIST_PATH = "data/reddit_subreddits.txt"
-CHUNK_FILE = "data/reddit_chunks/reddit_chunk.json"
+CHUNK_FILE = "data/youtube8m_chunks/reddit_chunk.json"
 CHECKED_TABLE = "clickyleaks_checked"
-TARGET_NEW_IDS = 100
 
 def get_reddit_token():
     print("[Auth] Getting Reddit token...")
     if not all([REDDIT_CLIENT_ID, REDDIT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD]):
         print("[Error] One or more Reddit credentials are missing.")
         return None
+
     auth = requests.auth.HTTPBasicAuth(REDDIT_CLIENT_ID, REDDIT_SECRET)
     data = {
         "grant_type": "password",
         "username": REDDIT_USERNAME,
         "password": REDDIT_PASSWORD,
     }
-    headers = {"User-Agent": "ClickyleaksBot/0.1 by " + REDDIT_USERNAME}
+    headers = {"User-Agent": f"ClickyleaksBot/0.1 by {REDDIT_USERNAME}"}
+
     try:
         res = requests.post("https://www.reddit.com/api/v1/access_token",
                             auth=auth, data=data, headers=headers)
         res.raise_for_status()
-        return res.json()["access_token"]
+        token = res.json()["access_token"]
+        return token
     except Exception as e:
         print(f"[Error] Reddit auth failed: {e}")
         return None
 
-def get_subreddit_list():
+def get_subreddits():
     with open(SUBREDDIT_LIST_PATH, "r") as f:
-        return [line.strip() for line in f if line.strip()]
+        subs = [line.strip() for line in f if line.strip()]
+    random.shuffle(subs)
+    return subs
 
 def extract_youtube_ids(posts):
     ids = set()
@@ -74,7 +77,8 @@ def save_ids_to_chunk(new_ids):
     if not new_ids:
         return
 
-    os.makedirs(os.path.dirname(CHUNK_FILE), exist_ok=True)
+    if not os.path.exists(os.path.dirname(CHUNK_FILE)):
+        os.makedirs(os.path.dirname(CHUNK_FILE))
 
     if os.path.exists(CHUNK_FILE):
         with open(CHUNK_FILE, "r") as f:
@@ -85,7 +89,6 @@ def save_ids_to_chunk(new_ids):
     combined = list(set(current_ids + new_ids))
     with open(CHUNK_FILE, "w") as f:
         json.dump(combined, f, indent=2)
-
     print(f"[Save] Added {len(new_ids)} new IDs to {CHUNK_FILE}")
 
 def main():
@@ -95,15 +98,14 @@ def main():
 
     headers = {
         "Authorization": f"bearer {token}",
-        "User-Agent": "ClickyleaksBot/0.1 by " + REDDIT_USERNAME
+        "User-Agent": f"ClickyleaksBot/0.1 by {REDDIT_USERNAME}"
     }
 
-    all_new_ids = []
-    subreddits = get_subreddit_list()
-    random.shuffle(subreddits)
+    subreddits = get_subreddits()
+    collected_ids = set()
 
     for subreddit in subreddits:
-        if len(all_new_ids) >= TARGET_NEW_IDS:
+        if len(collected_ids) >= 100:
             break
 
         print(f"[Subreddit] Scanning /r/{subreddit}")
@@ -122,15 +124,9 @@ def main():
 
         new_ids = filter_new_ids(ids)
         print(f"[Info] {len(new_ids)} new IDs after deduplication.")
-        all_new_ids.extend(new_ids)
+        collected_ids.update(new_ids)
 
-        time.sleep(2)  # polite delay
-
-    if all_new_ids:
-        final_ids = all_new_ids[:TARGET_NEW_IDS]
-        save_ids_to_chunk(final_ids)
-    else:
-        print("[Done] No new video IDs found in this run.")
+    save_ids_to_chunk(list(collected_ids))
 
 if __name__ == "__main__":
     main()
