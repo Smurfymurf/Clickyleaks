@@ -1,12 +1,12 @@
-name: Reddit Scraper (Hourly)
+name: Reddit Scanner
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'  # Runs at the start of every hour
-  workflow_dispatch:      # Allows manual trigger
+    - cron: '0 */6 * * *'  # Runs every 6 hours
 
 jobs:
-  run-reddit-scraper:
+  scan-reddit:
     runs-on: ubuntu-latest
 
     env:
@@ -24,12 +24,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: 3.11
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests python-dotenv supabase
+        run: pip install -r requirements.txt
 
-      - name: Run Reddit Scraper
+      - name: Run Reddit scanner
         run: python reddit_scraper.py
+
+      - name: Upload chunk (optional debug)
+        uses: actions/upload-artifact@v3
+        with:
+          name: reddit_chunk
+          path: data/youtube8m_chunks/reddit_chunk.json
