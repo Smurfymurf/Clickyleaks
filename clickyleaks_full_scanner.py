@@ -45,14 +45,23 @@ with open(WELL_KNOWN_PATH, "r") as f:
     )
 print(f"[Init] Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
+# === UPDATED FUNCTION ONLY ===
 def get_current_chunk_and_index():
     all_chunks = [f for f in os.listdir(CHUNK_DIR) if f.endswith(".json")]
+    reddit_chunks = [f for f in all_chunks if f.startswith("reddit_")]
+    original_chunks = [f for f in all_chunks if not f.startswith("reddit_")]
+
     if not all_chunks:
         print("[Error] No chunk files found.")
         return None, 0
 
-    chunk_name = random.choice(all_chunks)
+    # 70% chance to pick a Reddit chunk
+    if reddit_chunks and random.random() < 0.7:
+        chunk_name = random.choice(reddit_chunks)
+    else:
+        chunk_name = random.choice(original_chunks) if original_chunks else random.choice(reddit_chunks)
 
+    # Resume or start progress tracking
     resp = supabase.table(PROGRESS_TABLE).select("*").eq("chunk_name", chunk_name).limit(1).execute()
     if resp.data:
         print(f"[Resume] Found saved progress for {chunk_name}")
