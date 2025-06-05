@@ -2,9 +2,11 @@ import os
 import json
 import random
 import requests
+from dotenv import load_dotenv
 from supabase import create_client
 
-# === Environment Variables from GitHub Actions ===
+# === Load environment variables ===
+load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
@@ -24,9 +26,9 @@ def get_reddit_token():
     data = {
         "grant_type": "password",
         "username": REDDIT_USERNAME,
-        "password": REDDIT_PASSWORD,
+        "password": REDDIT_PASSWORD
     }
-    headers = {"User-Agent": f"ClickyleaksBot/0.1 by {REDDIT_USERNAME}"}
+    headers = {"User-Agent": "ClickyleaksTestBot/0.1 by " + REDDIT_USERNAME}
     try:
         res = requests.post("https://www.reddit.com/api/v1/access_token",
                             auth=auth, data=data, headers=headers)
@@ -35,6 +37,7 @@ def get_reddit_token():
         return token
     except Exception as e:
         print(f"[Error] Reddit auth failed: {e}")
+        print(res.text)
         return None
 
 def get_random_subreddit():
@@ -70,7 +73,8 @@ def save_ids_to_chunk(new_ids):
     if not new_ids:
         return
 
-    os.makedirs(os.path.dirname(CHUNK_FILE), exist_ok=True)
+    if not os.path.exists(os.path.dirname(CHUNK_FILE)):
+        os.makedirs(os.path.dirname(CHUNK_FILE))
 
     if os.path.exists(CHUNK_FILE):
         with open(CHUNK_FILE, "r") as f:
@@ -99,7 +103,7 @@ def main():
 
     headers = {
         "Authorization": f"bearer {token}",
-        "User-Agent": f"ClickyleaksBot/0.1 by {REDDIT_USERNAME}"
+        "User-Agent": "ClickyleaksTestBot/0.1 by " + REDDIT_USERNAME
     }
 
     url = f"https://oauth.reddit.com/r/{subreddit}/new.json?limit=100"
