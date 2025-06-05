@@ -1,9 +1,8 @@
 import os
-import re
 import json
 import random
+import time
 import requests
-from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -11,88 +10,119 @@ from supabase import create_client
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
+REDDIT_SECRET = os.getenv("REDDIT_SECRET")
+REDDIT_USERNAME = os.getenv("REDDIT_USERNAME")
+REDDIT_PASSWORD = os.getenv("REDDIT_PASSWORD")
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === Config ===
-SUBREDDIT_FILE = "data/reddit_subreddits.txt"
-CHUNK_DIR = "data/youtube8m_chunks"
-CHUNK_SIZE = 1000
-MAX_POSTS = 100
+SUBREDDIT_LIST_PATH = "data/reddit_subreddits.txt"
+CHUNK_FILE = "data/reddit_chunks/reddit_chunk.json"
+CHECKED_TABLE = "clickyleaks_checked"
 
-# ✅ Updated User-Agent with your Reddit username
-HEADERS = {
-    "User-Agent": "ClickyleaksBot/1.0 by chatbotbuzz"
-}
-
-YOUTUBE_PATTERNS = [
-    r"https?://(?:www\.)?youtube\.com/watch\?v=([A-Za-z0-9_-]{11})",
-    r"https?://(?:www\.)?youtu\.be/([A-Za-z0-9_-]{11})"
-]
-
-os.makedirs(CHUNK_DIR, exist_ok=True)
-
-# === Load subreddit list ===
-with open(SUBREDDIT_FILE, "r") as f:
-    subreddits = [line.strip() for line in f if line.strip()]
-
-subreddit = random.choice(subreddits)
-
-def fetch_reddit_posts(subreddit):
-    url = f"https://www.reddit.com/r/{subreddit}/new.json?limit={MAX_POSTS}"
+def get_reddit_token():
+    print("[Auth] Getting Reddit token...")
+    auth = requests.auth.HTTPBasicAuth(REDDIT_CLIENT_ID, REDDIT_SECRET)
+    data = {
+        "grant_type": "password",
+        "username": REDDIT_USERNAME,
+        "password": REDDIT_PASSWORD,
+    }
+    headers = {"User-Agent": "ClickyleaksBot/0.1 by stevethesmurf"}
     try:
-        res = requests.get(url, headers=HEADERS, timeout=10)
+        res = requests.post("https://www.reddit.com/api/v1/access_token",
+                            auth=auth, data=data, headers=headers)
         res.raise_for_status()
-        data = res.json()
-        return data.get("data", {}).get("children", [])
+        token = res.json()["access_token"]
+        return token
     except Exception as e:
-        print(f"[Error] Fetch failed for /r/{subreddit}: {e}")
+        print(f"[Error] Reddit auth failed: {e}")
+        return None
+
+def get_random_subreddit():
+    with open(SUBREDDIT_LIST_PATH, "r") as f:
+        subs = [line.strip() for line in f if line.strip()]
+    return random.choice(subs)
+
+def extract_youtube_ids(posts):
+    ids = set()
+    for post in posts:
+        try:
+            url = post["data"]["url"]
+            if "youtube.com/watch?v=" in url or "youtu.be/" in url:
+                if "youtube.com/watch?v=" in url:
+                    video_id = url.split("watch?v=")[-1].split("&")[0]
+                else:
+                    video_id = url.split("/")[-1].split("?")[0]
+                if len(video_id) >= 8:
+                    ids.add(video_id)
+        except:
+            continue
+    return list(ids)
+
+def filter_new_ids(video_ids):
+    if not video_ids:
         return []
 
-def extract_youtube_ids(text):
-    ids = set()
-    for pattern in YOUTUBE_PATTERNS:
-        ids.update(re.findall(pattern, text))
-    return ids
+    response = supabase.table(CHECKED_TABLE).select("video_id").in_("video_id", video_ids).execute()
+    already = set(row["video_id"] for row in response.data) if response.data else set()
+    return [vid for vid in video_ids if vid not in already]
 
-def bulk_check_ids(ids):
-    if not ids:
-        return set()
-    checked = set()
-    chunks = [list(ids)[i:i+100] for i in range(0, len(ids), 100)]
-    for chunk in chunks:
-        res = supabase.table("clickyleaks_checked").select("video_id").in_("video_id", chunk).execute()
-        if res.data:
-            checked.update(row["video_id"] for row in res.data)
-    return checked
-
-def main():
-    posts = fetch_reddit_posts(subreddit)
-    all_ids = set()
-
-    for post in posts:
-        data = post.get("data", {})
-        content = f"{data.get('title', '')}\n{data.get('selftext', '')}\n{data.get('url', '')}"
-        ids = extract_youtube_ids(content)
-        all_ids.update(ids)
-
-    print(f"[{subreddit}] Found {len(all_ids)} video IDs")
-
-    checked = bulk_check_ids(all_ids)
-    fresh = list(all_ids - checked)
-
-    if not fresh:
-        print("[Info] No new IDs.")
+def save_ids_to_chunk(new_ids):
+    if not new_ids:
         return
 
-    random.shuffle(fresh)
-    chunks = [fresh[i:i+CHUNK_SIZE] for i in range(0, len(fresh), CHUNK_SIZE)]
+    if not os.path.exists(os.path.dirname(CHUNK_FILE)):
+        os.makedirs(os.path.dirname(CHUNK_FILE))
 
-    for i, chunk in enumerate(chunks):
-        filename = f"reddit_chunk_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{i}.json"
-        path = os.path.join(CHUNK_DIR, filename)
-        with open(path, "w") as f:
-            json.dump(chunk, f)
-        print(f"[Saved] {len(chunk)} IDs → {path}")
+    if os.path.exists(CHUNK_FILE):
+        with open(CHUNK_FILE, "r") as f:
+            current_ids = json.load(f)
+    else:
+        current_ids = []
+
+    combined = list(set(current_ids + new_ids))
+    with open(CHUNK_FILE, "w") as f:
+        json.dump(combined, f, indent=2)
+    print(f"[Save] Added {len(new_ids)} new IDs to {CHUNK_FILE}")
+
+def mark_as_checked(video_ids):
+    if not video_ids:
+        return
+    rows = [{"video_id": vid} for vid in video_ids]
+    supabase.table(CHECKED_TABLE).upsert(rows, on_conflict=["video_id"]).execute()
+
+def main():
+    token = get_reddit_token()
+    if not token:
+        return
+
+    subreddit = get_random_subreddit()
+    print(f"[Subreddit] Scanning /r/{subreddit}")
+
+    headers = {
+        "Authorization": f"bearer {token}",
+        "User-Agent": "ClickyleaksBot/0.1 by stevethesmurf"
+    }
+
+    url = f"https://oauth.reddit.com/r/{subreddit}/new.json?limit=100"
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        res.raise_for_status()
+        posts = res.json()["data"]["children"]
+    except Exception as e:
+        print(f"[Error] Fetch failed for /r/{subreddit}: {e}")
+        return
+
+    ids = extract_youtube_ids(posts)
+    print(f"[{subreddit}] Found {len(ids)} video IDs")
+
+    new_ids = filter_new_ids(ids)
+    print(f"[Info] {len(new_ids)} new IDs after deduplication.")
+
+    save_ids_to_chunk(new_ids)
+    mark_as_checked(new_ids)
 
 if __name__ == "__main__":
     main()
