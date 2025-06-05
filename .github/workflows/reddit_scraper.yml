@@ -2,8 +2,8 @@ name: Reddit YouTube Scraper
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour on the hour (UTC)
-  workflow_dispatch:     # Allow manual trigger
+    - cron: '0 * * * *'  # Every hour (UTC)
+  workflow_dispatch:     # Optional: allow manual run from GitHub
 
 jobs:
   run-scraper:
@@ -14,7 +14,7 @@ jobs:
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install python-dotenv supabase
+          pip install python-dotenv supabase requests
 
       - name: Run Reddit scraper
         run: |
