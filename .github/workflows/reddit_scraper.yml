@@ -3,7 +3,7 @@ name: Run Reddit Scanner and Save Chunk
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'  # Runs every 6 hours — adjust as needed
+    - cron: '*/30 * * * *'  # Runs every 30 minutes (UTC)
 
 jobs:
   reddit-scan:
@@ -45,4 +45,3 @@ jobs:
             git push origin main
           else
             echo "No changes to commit."
-          fi
