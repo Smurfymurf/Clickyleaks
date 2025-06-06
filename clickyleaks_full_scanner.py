@@ -45,7 +45,6 @@ with open(WELL_KNOWN_PATH, "r") as f:
     )
 print(f"[Init] Loaded {len(WELL_KNOWN_DOMAINS)} well-known domains.")
 
-# === UPDATED FUNCTION ONLY ===
 def get_current_chunk_and_index():
     all_chunks = [f for f in os.listdir(CHUNK_DIR) if f.endswith(".json")]
     reddit_chunks = [f for f in all_chunks if f.startswith("reddit_")]
@@ -55,13 +54,11 @@ def get_current_chunk_and_index():
         print("[Error] No chunk files found.")
         return None, 0
 
-    # 70% chance to pick a Reddit chunk
     if reddit_chunks and random.random() < 0.7:
         chunk_name = random.choice(reddit_chunks)
     else:
         chunk_name = random.choice(original_chunks) if original_chunks else random.choice(reddit_chunks)
 
-    # Resume or start progress tracking
     resp = supabase.table(PROGRESS_TABLE).select("*").eq("chunk_name", chunk_name).limit(1).execute()
     if resp.data:
         print(f"[Resume] Found saved progress for {chunk_name}")
@@ -71,11 +68,27 @@ def get_current_chunk_and_index():
     return chunk_name, 0
 
 def save_progress(chunk_name, index, done=False):
-    print(f"[Progress] Saving progress: {chunk_name} at index {index} (done={done})")
+    # Determine if chunk is truly done based on file length
+    path = os.path.join(CHUNK_DIR, chunk_name)
+    if not os.path.exists(path):
+        print(f"[Warning] Cannot check chunk size — file missing: {chunk_name}")
+        return
+
+    with open(path, "r") as f:
+        try:
+            chunk_data = json.load(f)
+        except json.JSONDecodeError:
+            chunk_data = []
+
+    is_full = index >= len(chunk_data)
+    fully_scanned = done and is_full
+
+    print(f"[Progress] Saving: {chunk_name}, index={index}, fully_scanned={fully_scanned}")
+
     supabase.table(PROGRESS_TABLE).upsert({
         "chunk_name": chunk_name,
         "last_scanned_index": index,
-        "fully_scanned": done,
+        "fully_scanned": fully_scanned,
         "updated_at": datetime.utcnow().isoformat()
     }, on_conflict=["chunk_name"]).execute()
 
