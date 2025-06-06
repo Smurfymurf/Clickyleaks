@@ -1,4 +1,6 @@
 import os
+import time
+import random
 import requests
 from datetime import datetime, timedelta
 from supabase import create_client
@@ -20,7 +22,7 @@ SUPPORTED_TLDS = {
     ".world", ".sex", ".xxx", ".cf", ".icu", ".nl"
 }
 
-def check_domain(domain):
+def check_domain(domain, retries=1):
     tld = "." + domain.split(".")[-1].lower()
     if tld not in SUPPORTED_TLDS:
         print(f"[SKIP] Unsupported TLD: {domain}")
@@ -28,16 +30,24 @@ def check_domain(domain):
 
     headers = {"apikey": APILAYER_KEY}
     url = f"https://api.apilayer.com/whois/check?domain={domain}"
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        if res.status_code == 200:
-            return res.json().get("result")
-        else:
-            print(f"[ERROR] API response {res.status_code} for {domain}")
+
+    for attempt in range(retries + 1):
+        try:
+            res = requests.get(url, headers=headers, timeout=25)
+            if res.status_code == 200:
+                return res.json().get("result")
+            else:
+                print(f"[ERROR] API response {res.status_code} for {domain}")
+                return None
+        except requests.exceptions.ReadTimeout:
+            print(f"[TIMEOUT] {domain} (attempt {attempt + 1})")
+            if attempt < retries:
+                time.sleep(2)
+            else:
+                return None
+        except Exception as e:
+            print(f"[ERROR] Request failed for {domain}: {e}")
             return None
-    except Exception as e:
-        print(f"[ERROR] Request failed for {domain}: {e}")
-        return None
 
 def main():
     # 1. Fetch domains with no last_verified_at
@@ -67,7 +77,7 @@ def main():
         domain_id = row["id"]
         now = datetime.utcnow().isoformat()
 
-        result = check_domain(domain)
+        result = check_domain(domain, retries=1)
         if result == "available":
             supabase.table("Clickyleaks").update({
                 "last_verified_at": now
@@ -82,6 +92,9 @@ def main():
             print(f"[×] {domain} → Now REGISTERED")
         else:
             print(f"[!] Skipped or failed: {domain}")
+
+        # Respectful delay to avoid hitting rate limits
+        time.sleep(random.uniform(1.5, 3.5))
 
 if __name__ == "__main__":
     main()
