@@ -18,8 +18,8 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 SUBREDDIT_LIST_PATH = "data/reddit_subreddits.txt"
 CHUNK_DIR = "data/youtube8m_chunks"
-CHUNK_FILE = os.path.join(CHUNK_DIR, "reddit_chunk.json")
 CHECKED_TABLE = "clickyleaks_checked"
+MAX_IDS_PER_CHUNK = 10000
 
 
 def get_reddit_token():
@@ -75,27 +75,48 @@ def filter_new_ids(video_ids):
     return [vid for vid in video_ids if vid not in already]
 
 
-def save_ids_to_chunk(new_ids):
+def get_latest_chunk_number():
+    os.makedirs(CHUNK_DIR, exist_ok=True)
+    files = [f for f in os.listdir(CHUNK_DIR) if f.startswith("reddit_chunk_") and f.endswith(".json")]
+    numbers = [int(f.split("_")[-1].split(".")[0]) for f in files if f.split("_")[-1].split(".")[0].isdigit()]
+    return max(numbers) if numbers else 1
+
+
+def load_chunk(chunk_number):
+    path = os.path.join(CHUNK_DIR, f"reddit_chunk_{chunk_number}.json")
+    if not os.path.exists(path):
+        return []
+    with open(path, "r") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return []
+
+
+def save_chunk(chunk_number, data):
+    path = os.path.join(CHUNK_DIR, f"reddit_chunk_{chunk_number}.json")
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def save_ids_to_chunks(new_ids):
     if not new_ids:
         return
 
-    os.makedirs(CHUNK_DIR, exist_ok=True)
+    chunk_num = get_latest_chunk_number()
+    current_data = load_chunk(chunk_num)
+    combined = current_data + new_ids
 
-    if os.path.exists(CHUNK_FILE):
-        try:
-            with open(CHUNK_FILE, "r") as f:
-                existing_ids = json.load(f)
-        except json.JSONDecodeError:
-            existing_ids = []
-    else:
-        existing_ids = []
+    while len(combined) > MAX_IDS_PER_CHUNK:
+        to_save = combined[:MAX_IDS_PER_CHUNK]
+        save_chunk(chunk_num, to_save)
+        combined = combined[MAX_IDS_PER_CHUNK:]
+        chunk_num += 1
 
-    combined = list(set(existing_ids + new_ids))
+    if combined:
+        save_chunk(chunk_num, combined)
 
-    with open(CHUNK_FILE, "w") as f:
-        json.dump(combined, f, indent=2)
-
-    print(f"[Save] Added {len(new_ids)} new IDs. Total now: {len(combined)}")
+    print(f"[Save] Added {len(new_ids)} new IDs across chunks.")
 
 
 def main():
@@ -132,7 +153,7 @@ def main():
         total_new.extend(new_ids)
 
     if total_new:
-        save_ids_to_chunk(total_new)
+        save_ids_to_chunks(total_new)
     else:
         print("[Info] No new video IDs found.")
 
