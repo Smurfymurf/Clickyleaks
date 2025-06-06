@@ -1,4 +1,4 @@
-name: Run Reddit Scanner and Save Chunk
+name: Run Reddit Scanner and Save Chunks
 
 on:
   workflow_dispatch:
@@ -34,14 +34,15 @@ jobs:
           REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
         run: python reddit_scraper.py
 
-      - name: Commit updated reddit_chunk.json if changed
+      - name: Commit updated reddit_chunk_*.json files if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if git status --porcelain | grep "data/youtube8m_chunks/reddit_chunk.json"; then
-            git add data/youtube8m_chunks/reddit_chunk.json
-            git commit -m "Update reddit_chunk.json from Reddit scanner run"
+          if git status --porcelain | grep "data/youtube8m_chunks/reddit_chunk_.*\.json"; then
+            git add data/youtube8m_chunks/reddit_chunk_*.json
+            git commit -m "Update reddit_chunk JSON files from Reddit scanner run"
             git push origin main
           else
             echo "No changes to commit."
+          fi
