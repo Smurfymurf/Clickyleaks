@@ -2,7 +2,7 @@ name: Monitor Registered Domains
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # Every 2 hours at minute 0
+    - cron: '*/45 * * * *'  # Every 45 minutes
   workflow_dispatch:
 
 jobs:
