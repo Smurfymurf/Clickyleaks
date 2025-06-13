@@ -24,7 +24,7 @@ def check_domain(domain):
     tld = "." + domain.split(".")[-1].lower()
     if tld not in SUPPORTED_TLDS:
         print(f"[SKIP] Unsupported TLD: {domain}")
-        return None
+        return "unsupported"
 
     headers = {"apikey": APILAYER_KEY}
     url = f"https://api.apilayer.com/whois/check?domain={domain}"
@@ -52,6 +52,7 @@ def main():
         .eq("is_available", True)\
         .eq("verified", True)\
         .is_("last_verified_at", None)\
+        .is_("unsupported_tld", None)\
         .limit(25)\
         .execute().data
 
@@ -62,6 +63,7 @@ def main():
         .eq("is_available", True)\
         .eq("verified", True)\
         .lt("last_verified_at", cutoff)\
+        .is_("unsupported_tld", None)\
         .limit(25)\
         .execute().data
 
@@ -86,6 +88,11 @@ def main():
                 "last_verified_at": now
             }).eq("id", domain_id).execute()
             print(f"[×] {domain} → Now REGISTERED")
+        elif result == "unsupported":
+            supabase.table("Clickyleaks").update({
+                "unsupported_tld": True
+            }).eq("id", domain_id).execute()
+            print(f"[SKIP] Marked unsupported: {domain}")
         else:
             print(f"[!] Skipped or failed: {domain}")
 
