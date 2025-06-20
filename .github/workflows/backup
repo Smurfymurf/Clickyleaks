@@ -1,0 +1,35 @@
+name: Supabase DB Backup
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # every day at 6am UTC
+  workflow_dispatch:     # allows manual trigger
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    name: Backup Supabase Database
+
+    steps:
+      - name: Set up environment
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Dump Supabase DB to SQL
+        env:
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+        run: |
+          pg_dump -h ${{ secrets.PGHOST }} \
+                  -U ${{ secrets.PGUSER }} \
+                  -d ${{ secrets.PGDATABASE }} \
+                  -p ${{ secrets.PGPORT }} \
+                  -F p -f backup.sql
+
+      - name: Create Release & Upload Dump
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: backup-$(date +%Y-%m-%d)
+          name: "Backup $(date +%Y-%m-%d)"
+          body: "Daily automated backup"
+          files: backup.sql
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
