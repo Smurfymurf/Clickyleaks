@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 from datetime import datetime, timedelta
 from supabase import create_client
@@ -21,29 +22,36 @@ SUPPORTED_TLDS = {
 }
 
 def check_domain(domain):
-    tld = "." + domain.split(".")[-1].lower()
+    domain = domain.replace(",", ".").strip().lower()
+    tld = "." + domain.split(".")[-1]
     if tld not in SUPPORTED_TLDS:
         print(f"[SKIP] Unsupported TLD: {domain}")
         return "unsupported"
 
     headers = {"apikey": APILAYER_KEY}
     url = f"https://api.apilayer.com/whois/check?domain={domain}"
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        if res.status_code == 200:
-            return res.json().get("result")
-        elif res.status_code == 429:
-            print(f"[RATE LIMIT] API rate limit hit for {domain}")
-            return None
-        else:
-            print(f"[ERROR] API response {res.status_code} for {domain}")
-            return None
-    except requests.exceptions.Timeout:
-        print(f"[TIMEOUT] Skipped (timeout): {domain}")
-        return None
-    except Exception as e:
-        print(f"[ERROR] Request failed for {domain}: {e}")
-        return None
+
+    for attempt in range(3):
+        try:
+            res = requests.get(url, headers=headers, timeout=15)
+            if res.status_code == 200:
+                return res.json().get("result")
+            elif res.status_code == 429:
+                print(f"[RATE LIMIT] API limit hit for {domain}")
+                return None
+            elif res.status_code == 400:
+                print(f"[ERROR] Malformed domain: {domain}")
+                return None
+            else:
+                print(f"[ERROR] API response {res.status_code} for {domain}")
+                return None
+        except requests.exceptions.Timeout:
+            print(f"[TIMEOUT] Skipped (timeout): {domain} (attempt {attempt + 1}/3)")
+        except Exception as e:
+            print(f"[ERROR] Request failed for {domain}: {e}")
+        time.sleep(2)
+
+    return None
 
 def main():
     # 1. Fetch domains with no last_verified_at
