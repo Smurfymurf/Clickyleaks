@@ -54,6 +54,17 @@ def get_current_chunk_and_index():
         print("[Error] No chunk files found.")
         return None, 0
 
+    # Fetch progress from Supabase and filter out fully scanned chunks
+    progress_resp = supabase.table(PROGRESS_TABLE).select("chunk_name", "fully_scanned").execute()
+    fully_scanned_chunks = {entry["chunk_name"] for entry in progress_resp.data if entry.get("fully_scanned")}
+
+    reddit_chunks = [f for f in reddit_chunks if f not in fully_scanned_chunks]
+    original_chunks = [f for f in original_chunks if f not in fully_scanned_chunks]
+
+    if not reddit_chunks and not original_chunks:
+        print("[Info] All chunks fully scanned.")
+        return None, 0
+
     if reddit_chunks and random.random() < 0.7:
         chunk_name = random.choice(reddit_chunks)
     else:
