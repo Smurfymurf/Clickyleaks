@@ -21,24 +21,33 @@ SUPPORTED_TLDS = {
 }
 
 def check_domain(domain):
-    tld = "." + domain.split(".")[-1].lower()
+    domain = domain.replace(",", ".").strip().lower()
+    tld = "." + domain.split(".")[-1]
     if tld not in SUPPORTED_TLDS:
         print(f"[SKIP] Unsupported TLD: {domain}")
         return "unsupported"
 
     headers = {"apikey": APILAYER_KEY}
     url = f"https://api.apilayer.com/whois/check?domain={domain}"
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        if res.status_code == 200:
-            result = res.json().get("result")
-            return result
-        else:
-            print(f"[ERROR] API response {res.status_code} for {domain}")
-            return None
-    except Exception as e:
-        print(f"[ERROR] Request failed for {domain}: {e}")
-        return None
+
+    for attempt in range(3):
+        try:
+            res = requests.get(url, headers=headers, timeout=15)
+            if res.status_code == 200:
+                return res.json().get("result")
+            elif res.status_code == 400:
+                print(f"[ERROR] Malformed request for {domain}")
+                return None
+            else:
+                print(f"[ERROR] API response {res.status_code} for {domain}")
+                return None
+        except requests.exceptions.Timeout:
+            print(f"[TIMEOUT] {domain} (attempt {attempt + 1}/3)")
+        except Exception as e:
+            print(f"[ERROR] Request failed for {domain}: {e}")
+        time.sleep(2)  # Wait before retry
+
+    return None
 
 def main():
     rows = supabase.table("Clickyleaks") \
