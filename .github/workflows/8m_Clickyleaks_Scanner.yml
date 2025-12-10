@@ -1,9 +1,9 @@
 name: Clickyleaks Full Scanner
 
 on:
-  schedule:
-    - cron: '0 * * * *'  # Runs at minute 0 every hour
   workflow_dispatch:
+  schedule:
+    - cron: '0 */4 * * *'  # Runs every 4 hours (UTC)
 
 jobs:
   run-scanner:
